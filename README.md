@@ -1,22 +1,28 @@
 # x-agent
 
-An agent that drafts posts about my work, and refuses to write a claim it has no source
-for.
+I built an agent that drafts my X posts based on my current projects and git commits,
+which would also refuse to write a claim it cannot find a source for.
 
-The interesting part is not the drafting. Any model writes a plausible post. The problem
-is that a plausible post about work you did not do is indistinguishable from a real one
-until someone checks, and nobody checks. So this repo is built around the checking.
+The best part is not drafting, any model can do that. A post like that is
+indistinguishable from a real one until someone checks, and nobody checks. So this repo
+is built around the checking.
+
+The reason I care: the first run of my due diligence agent invented two competitors that
+don't exist. That took a week of grounding checks to fix, and it is why I don't trust an
+agent output I can't trace back to a source.
 
 ## The failure it exists to prevent
 
-A previous version of this system produced 19 drafts and shipped 0 posts in 10 days.
-Two causes: the approval step lived on a `localhost` service that was usually not
-running, and the default when a draft was not approved was to do nothing. A pipeline
-whose failure mode is silence looks healthy right up until you count the output.
+A previous version of this system produced 19 drafts and shipped 0 posts in 10 days. The
+real reason is not a clever one: I kept forgetting about it, I got busy, and **it was too
+passive.** It waited on a dashboard for me to come to it. Nothing ever came to me.
 
-The second failure is subtler and worse. On a day with no material, a generator will
-happily write a convincing ship log about nothing. That is not a bug you notice from
-inside the pipeline, because the output looks exactly like the good output.
+That is a design fault, not a discipline fault, and it is the one worth fixing first. A
+tool that needs you to remember it will lose to everything else in your week.
+
+The second failure is subtler. On a day with no material, a generator will happily write
+a convincing ship log about nothing. That is not a bug you notice from inside the
+pipeline, because the output looks exactly like the good output.
 
 ## Design
 
@@ -108,16 +114,18 @@ raise it and to include private repos.
 The gate enforces "no emoji" and "no em dashes". Those came from observation, and they
 carry different confidence:
 
-- **No emoji** is well supported. Zero appear across roughly 50 messages of my own writing.
-- **No em dashes** is provisional. Em dashes were removed from a live landing page, but
-  the commit that did it was AI co-authored, so the instruction cannot be attributed to me
-  with confidence. It is a reasonable default held until real approval diffs confirm or
-  kill it.
+- **No em dashes** is a hard rule, stated by me directly: anywhere, ever, in code and
+  content alike. It was inferred first from a landing-page commit, which was a weak
+  source because that commit was AI co-authored. The inference happened to be right, but
+  it was right by luck until I confirmed it.
+- **No emoji on X** is well supported and now qualified. Zero appear across roughly 50
+  messages of my own writing, and my own rule is none on X, 2 to 4 on LinkedIn. The
+  earlier universal "no emoji" was overfitted to one channel.
 
-That distinction is the point. In a workspace where most artifacts are AI-assisted,
-"someone wrote this" is not the same as "I wrote this", and a voice model trained on the
-difference learns the wrong person. Every rule here records which corpus it came from and
-how strong that corpus is.
+That gap between a lucky inference and a stated rule is the point. In a workspace where
+most artifacts are AI-assisted, "someone wrote this" is not the same as "I wrote this",
+and a voice model trained on the difference learns the wrong person. Every rule here
+records which corpus it came from and how strong that corpus is.
 
 ## What is deliberately not in this repo
 

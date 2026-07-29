@@ -46,6 +46,13 @@ NOTHING_DUE = 3
 HERE = os.path.dirname(os.path.abspath(__file__))
 WINDOW_DAYS = 7
 
+# UNRESOLVED. Two answers from Karthik disagree: he said @karthikjpIO in chat on
+# 2026-07-29, and his voice guide (July 2026) says @karthikbuilds three times.
+# Both are his. Publishing under the wrong handle is not a small error, so this
+# sits in one place rather than inline in the prompt, and it stays on the value
+# he typed most recently in conversation until he settles it.
+X_HANDLE = "@karthikjpIO"
+
 # §12.4 source grades. The gate follows the claim, not where the evidence happens
 # to live. Work done behind a client firewall is still real; a commit is still not
 # a business result. The grade is always stated explicitly by whoever supplies the
@@ -435,7 +442,7 @@ def build_prompt(pillar, reason, material=None, note=None):
             % (pillar["key"], ", ".join(pillar["allows"])))
 
     out = []
-    out.append("Write one X post for Karthik Jp (@karthikjpIO).")
+    out.append("Write one X post for Karthik Javanappa (%s)." % X_HANDLE)
     out.append("")
     out.append("Audience: hiring managers and engineers at AI companies. He is looking")
     out.append("for a forward-deployed engineer or AI consultant role. Every post is an")
