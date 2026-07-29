@@ -74,9 +74,10 @@ $ python3 gather.py --days 14                 # -> raw/GATHER_2026-07-29.md, exi
 $ python3 draft.py --sources                  # what has a source today, per pillar
 $ python3 draft.py                            # -> the prompt, or exit 3 with the reason
 $ python3 draft.py --record failure --note notes/2026-07-29-gate-bug.md
+$ python3 draft.py | python3 generate.py > draft.md      # the whole loop
 $ python3 check.py --draft draft.md --material raw/GATHER_2026-07-29.md
 $ python3 check.py --draft thread.md --thread --json
-$ python3 -m unittest test_draft test_check -v
+$ python3 -m unittest test_draft test_check test_generate -v
 ```
 
 A note can also be captured from an answer given somewhere else, with the origin attached
@@ -126,11 +127,13 @@ stays out of a public repo; only the resulting rules ship, with their evidence g
 
 ## Status
 
-`gather.py`, `draft.py`, and `check.py` are done and tested: 106 tests, no dependencies.
+All four steps are done and tested: 122 tests, no dependencies.
 
-The generation call itself is not wired. `draft.py` emits a fully specified prompt and
-stops. That is a real boundary rather than an unfinished edge: everything that decides
-whether a post is honest, which pillar is due, whether a source exists, and what the
-writer is allowed to claim, is deterministic and testable without a model. The model call
-is a thin adapter on top of it, and I would rather ship the tested half than an untested
-integration.
+`generate.py` shells out to the `claude` CLI rather than calling an HTTP API, so it needs
+no API key and no SDK: it reuses the credentials the CLI already has. The model command is
+injectable, which is why the tests cover the paths that matter, an empty reply, a missing
+command, a non-zero exit and a timeout, without ever calling a model.
+
+It stays the thinnest module here on purpose. Everything that decides whether a post is
+honest happens before it, and everything that decides whether a draft is publishable
+happens after it.

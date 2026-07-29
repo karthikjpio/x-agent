@@ -365,6 +365,25 @@ class TestAvailability(unittest.TestCase):
     def test_pick_note_ignores_other_pillars(self):
         self.assertIsNone(draft.pick_note([note("failure")], "method"))
 
+    def test_same_day_collision_suffix_still_drains_in_written_order(self):
+        # capture_note names the second note of a day `<stem>-2.md`, and `-`
+        # sorts before `.`, so comparing whole filenames drains the newer note
+        # first. Found by writing two notes on one day and watching the wrong
+        # one come back.
+        first = note(date="2026-07-29", path="notes/2026-07-29-outcome.md")
+        second = note(date="2026-07-29", path="notes/2026-07-29-outcome-2.md")
+        picked = draft.pick_note([second, first], "decision")
+        self.assertEqual(picked["path"], "notes/2026-07-29-outcome.md")
+
+    def test_the_unsuffixed_note_wins_against_double_digit_suffixes(self):
+        # Only claims what it checks: the first note of the day still sorts
+        # first. Suffixes compare lexicographically, so `-10` still precedes
+        # `-2`. That needs 10 notes for one pillar in one day to matter, and
+        # fixing it would mean parsing the suffix, so it stands as a known edge.
+        notes = [note(path="notes/a-%d.md" % i) for i in (10, 2)]
+        notes.append(note(path="notes/a.md"))
+        self.assertEqual(draft.pick_note(notes, "decision")["path"], "notes/a.md")
+
 
 class TestSelection(unittest.TestCase):
     def test_empty_history_picks_highest_quota_pillar(self):

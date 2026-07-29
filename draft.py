@@ -303,9 +303,15 @@ def unused_notes(notes, history):
 
 
 def pick_note(notes, pillar_key):
-    """Oldest unused note first, so a backlog drains in the order it was written."""
+    """Oldest unused note first, so a backlog drains in the order it was written.
+
+    Sort on the path with the extension removed. Two notes written the same day
+    are `<stem>.md` and `<stem>-2.md`, and `-` sorts before `.`, so comparing
+    full filenames drains the second one first. Dropping the extension puts
+    `<stem>` before `<stem>-2`, which is the order they were written in.
+    """
     candidates = [n for n in notes if n["pillar"] == pillar_key]
-    candidates.sort(key=lambda n: (n["date"], n["path"]))
+    candidates.sort(key=lambda n: (n["date"], os.path.splitext(n["path"])[0]))
     return candidates[0] if candidates else None
 
 
