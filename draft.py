@@ -46,14 +46,58 @@ NOTHING_DUE = 3
 HERE = os.path.dirname(os.path.abspath(__file__))
 WINDOW_DAYS = 7
 
-# §12.2 quotas. `needs_material` marks pillars that assert a specific thing was
-# shipped: they require a commit to point at. The rest require a note.
+# §12.4 source grades. The gate follows the claim, not where the evidence happens
+# to live. Work done behind a client firewall is still real; a commit is still not
+# a business result. The grade is always stated explicitly by whoever supplies the
+# source. It is never inferred from the text of `source:` — a URL-shaped string is
+# not evidence of anything, and guessing here is how "self-published" quietly
+# becomes "verified".
+SOURCE_KINDS = {
+    "artifact": {
+        "label": "inspectable artifact",
+        "guidance": (
+            "Someone can open this and see it. It shows what was built. It does not "
+            "show a business result, so do not state one."),
+    },
+    "published": {
+        "label": "Karthik's own published account",
+        "guidance": (
+            "He published this himself, on his site, CV or profile. You may restate "
+            "the system names, stacks, adoption statements and qualitative outcomes "
+            "exactly as he published them. You may not add client names, numbers, "
+            "causality or implementation details, and you may not imply that private "
+            "code is publicly inspectable. This is his account of his own work, not "
+            "independent verification, and the post must not read as though anyone "
+            "else confirmed it."),
+    },
+    "private": {
+        "label": "private input from Karthik",
+        "guidance": (
+            "Said to the team, not to the public. Write from it, but do not present "
+            "it as a public record and do not quote anyone else who was in the "
+            "conversation."),
+    },
+}
+
+# Pillars that assert a delivery or a result. A `private` source only grounds these
+# when Karthik has separately marked it safe to publish.
+DELIVERY_PILLARS = {"client-work", "outcome"}
+
+# §12.2 quotas. `allows` is which source grades can ground each pillar.
+#
+# `outcome` deliberately excludes `artifact`: a commit proves a change was made and
+# nothing about whether it helped anyone. That was true before this rule existed —
+# the shape note said so in prose while the gate let commits through anyway.
+#
+# The judgment pillars exclude `artifact` too. A commit list does not contain the
+# reasoning behind a decision, and letting one stand in for that reasoning is the
+# original grounding gap wearing a different hat.
 PILLARS = [
     {
         "key": "client-work",
         "name": "Shipping client work with agents",
         "quota": 2,
-        "needs_material": True,
+        "allows": ("artifact", "published", "private"),
         "proves": "AI-native delivery on production client work",
         "shape": ("The constraint you were working under, what you and the agent each "
                   "did, how you verified it before it went live, and what shipped. The "
@@ -63,7 +107,7 @@ PILLARS = [
         "key": "decision",
         "name": "Decision + tradeoff, explained plainly",
         "quota": 2,
-        "needs_material": False,
+        "allows": ("published", "private"),
         "proves": "Translating a technical tradeoff for engineers and executives",
         "shape": ("The choice, who it affected, the option you rejected, and what the "
                   "choice cost or bought. No jargon a founder wouldn't use."),
@@ -72,7 +116,7 @@ PILLARS = [
         "key": "outcome",
         "name": "Client outcome",
         "quota": 1,
-        "needs_material": True,
+        "allows": ("published", "private"),
         "proves": "Customer empathy and measurable outcomes",
         "shape": ("Problem, constraint, result. Never infer a business result from a "
                   "commit. If the result was observed, state it. If it was not, say "
@@ -82,7 +126,7 @@ PILLARS = [
         "key": "failure",
         "name": "Failure + lesson",
         "quota": 1,
-        "needs_material": False,
+        "allows": ("published", "private"),
         "proves": "Judgment",
         "shape": ("A specific failure and what it cost. If it is still unresolved, say "
                   "so. Do not manufacture a clean lesson or a changed behaviour that "
@@ -92,7 +136,7 @@ PILLARS = [
         "key": "method",
         "name": "Reusable method",
         "quota": 1,
-        "needs_material": False,
+        "allows": ("published", "private"),
         "proves": "Accelerators and best practices that scale",
         "shape": ("A workflow someone else can lift, the context where it actually "
                   "worked, and one place it does not. Without both it is generic "
@@ -101,6 +145,10 @@ PILLARS = [
 ]
 
 BY_KEY = {p["key"]: p for p in PILLARS}
+
+# GATHER material is an artifact source, so it grounds only the pillars that accept
+# one.
+MATERIAL_PILLARS = [p["key"] for p in PILLARS if "artifact" in p["allows"]]
 
 # §8. Enforced mechanically by check.py after generation; repeated to the writer
 # so drafts arrive clean rather than getting bounced.
@@ -124,9 +172,10 @@ class DraftError(Exception):
 def parse_note(text, path):
     """Parse a note file: `---` frontmatter, then the body.
 
-    Requires `pillar` and `source`. `source` is where the content came from —
-    a note with no stated origin cannot be graded for provenance, and an
-    ungraded source is exactly how agent prose ends up published as his.
+    Requires `pillar`, `source` and `source_kind`. `source` is where the content
+    came from — a note with no stated origin cannot be graded for provenance, and
+    an ungraded source is exactly how agent prose ends up published as his.
+    `source_kind` is the grade, stated rather than guessed (§12.4).
 
     `#` lines in the frontmatter are comments. The template carries its
     instructions inline, and a copied instruction must not become a key.
@@ -148,20 +197,36 @@ def parse_note(text, path):
         k, v = line.split(":", 1)
         meta[k.strip()] = v.strip()
 
-    for field in ("pillar", "source"):
+    for field in ("pillar", "source", "source_kind"):
         if not meta.get(field):
             raise DraftError("%s: frontmatter needs a non-empty %r" % (path, field))
     if meta["pillar"] not in BY_KEY:
         raise DraftError("%s: unknown pillar %r" % (path, meta["pillar"]))
-    if BY_KEY[meta["pillar"]]["needs_material"]:
-        raise DraftError("%s: %s is commit-backed and cannot be sourced from a note"
-                         % (path, meta["pillar"]))
+
+    kind = meta["source_kind"]
+    if kind not in SOURCE_KINDS:
+        raise DraftError("%s: unknown source_kind %r (expected one of %s)"
+                         % (path, kind, ", ".join(sorted(SOURCE_KINDS))))
+
+    pillar = BY_KEY[meta["pillar"]]
+    if kind not in pillar["allows"]:
+        raise DraftError(
+            "%s: %s cannot be grounded by a %s source (accepts: %s)"
+            % (path, pillar["key"], kind, ", ".join(pillar["allows"])))
+
+    publishable = meta.get("publishable", "").lower() in ("yes", "true", "1")
+    if pillar["key"] in DELIVERY_PILLARS and kind == "private" and not publishable:
+        raise DraftError(
+            "%s: %s asserts a delivery or a result, and this is private input. "
+            "Add `publishable: yes` only if Karthik has said it can go public."
+            % (path, pillar["key"]))
 
     body = "\n".join(lines[end + 1:]).strip()
     if not body:
         raise DraftError("%s: note has frontmatter but no body" % path)
 
-    return {"path": path, "pillar": meta["pillar"], "source": meta["source"],
+    return {"path": path, "pillar": pillar["key"], "source": meta["source"],
+            "source_kind": kind, "publishable": publishable,
             "date": meta.get("date", ""), "body": body}
 
 
@@ -186,7 +251,7 @@ def load_notes(notes_dir):
     return notes
 
 
-def capture_note(notes_dir, pillar, source, body, today):
+def capture_note(notes_dir, pillar, source, kind, body, today, publishable=False):
     """Write a note from an answer given somewhere else, and return its path.
 
     Editing markdown on disk every day is friction that ends with three pillars
@@ -198,9 +263,10 @@ def capture_note(notes_dir, pillar, source, body, today):
     Validation runs through parse_note on the composed text: one set of rules,
     no second implementation to drift.
     """
-    text = "---\npillar: %s\nsource: %s\ndate: %s\n---\n\n%s\n" % (
-        pillar, source, today.isoformat(), (body or "").strip())
-    parse_note(text, "<capture>")   # rejects bad pillar, empty source, empty body
+    text = "---\npillar: %s\nsource: %s\nsource_kind: %s\npublishable: %s\ndate: %s\n---\n\n%s\n" % (
+        pillar, source, kind, "yes" if publishable else "no",
+        today.isoformat(), (body or "").strip())
+    parse_note(text, "<capture>")   # rejects bad pillar, grade, source or body
 
     os.makedirs(notes_dir, exist_ok=True)
     stem = "%s-%s" % (today.isoformat(), pillar)
@@ -219,6 +285,18 @@ def has_material(text):
     return text is not None and "## No public commits in this window" not in text
 
 
+def as_background(text):
+    """Strip GATHER's own drafting instructions before quoting it as background.
+
+    The file ends with a "Notes for drafting" section telling the writer that
+    every claim must trace to a commit. That is right when commits *are* the
+    source and wrong when they are background under a note of another grade —
+    two conflicting instructions in one prompt, and the one it should ignore
+    sounds the most emphatic.
+    """
+    return text.split("\n## Notes for drafting")[0].strip()
+
+
 def unused_notes(notes, history):
     spent = {row.get("note") for row in history if row.get("note")}
     return [n for n in notes if n["path"] not in spent]
@@ -232,13 +310,16 @@ def pick_note(notes, pillar_key):
 
 
 def available(material, notes):
-    """The set of pillar keys that have a source right now."""
+    """The set of pillar keys that have a source right now.
+
+    A note has already been graded by parse_note, so its presence for a pillar
+    means that grade is acceptable there. GATHER material grades as `artifact`
+    and so reaches fewer pillars than a note can.
+    """
     keys = set()
     for p in PILLARS:
-        if p["needs_material"]:
-            if has_material(material):
-                keys.add(p["key"])
-        elif pick_note(notes, p["key"]):
+        by_artifact = "artifact" in p["allows"] and has_material(material)
+        if by_artifact or pick_note(notes, p["key"]):
             keys.add(p["key"])
     return keys
 
@@ -334,11 +415,18 @@ def select(history, today, available_keys):
 # --- prompt ------------------------------------------------------------------
 
 def build_prompt(pillar, reason, material=None, note=None):
-    if pillar["needs_material"]:
-        if not has_material(material):
-            raise DraftError("%s needs commit material" % pillar["key"])
-    elif note is None:
-        raise DraftError("%s needs a note to ground it" % pillar["key"])
+    """Build the writer's prompt. A note wins over material when both exist:
+    it was supplied deliberately and it carries a grade."""
+    if note is not None:
+        if note["pillar"] != pillar["key"]:
+            raise DraftError("note is for %s, not %s" % (note["pillar"], pillar["key"]))
+        kind = note["source_kind"]
+    elif "artifact" in pillar["allows"] and has_material(material):
+        kind = "artifact"
+    else:
+        raise DraftError(
+            "%s has no source to build from (accepts: %s)"
+            % (pillar["key"], ", ".join(pillar["allows"])))
 
     out = []
     out.append("Write one X post for Karthik Jp (@karthikjpIO).")
@@ -356,27 +444,35 @@ def build_prompt(pillar, reason, material=None, note=None):
     out.append("")
     out.append("## Source")
     out.append("")
+    # The grade travels with the source into the prompt. Without it the writer
+    # cannot tell "he says he shipped this" from "here is the code", and the
+    # wording quietly upgrades one into the other.
+    out.append("Provenance: %s." % SOURCE_KINDS[kind]["label"])
+    out.append(SOURCE_KINDS[kind]["guidance"])
+    out.append("")
 
-    if pillar["needs_material"]:
-        out.append("This pillar asserts that something shipped. Every claim must trace to")
-        out.append("a commit below. Do not describe work that is not in this file.")
+    if note is None:
+        out.append("Every claim must trace to a commit below. Do not describe work that")
+        out.append("is not in this file.")
         out.append("")
         out.append(material.strip())
     else:
         out.append("Origin: %s (`%s`)" % (note["source"], note["path"]))
+        if note["publishable"]:
+            out.append("Karthik has marked this safe to publish.")
         out.append("")
-        out.append("This pillar makes a judgment claim, not a shipping claim. The note")
-        out.append("below is the whole of what you know. Write from it. Do not add a")
-        out.append("second example, a general principle it does not support, or a")
+        out.append("The note below is the whole of what you know. Write from it. Do not")
+        out.append("add a second example, a general principle it does not support, or a")
         out.append("resolution it does not describe.")
         out.append("")
         out.append(note["body"])
         if material and has_material(material):
             out.append("")
             out.append("Recent commits, for background only. Not a licence to claim a")
-            out.append("receipt or to widen the note beyond what it says:")
+            out.append("receipt or to widen the note beyond what it says. The provenance")
+            out.append("rule above wins over anything this section says:")
             out.append("")
-            out.append(material.strip())
+            out.append(as_background(material))
 
     out.append("")
     out.append("## Voice")
@@ -406,16 +502,18 @@ def describe_sources(material, notes, history):
     fresh = unused_notes(notes, history)
     lines = ["Sources available today:", ""]
     for p in PILLARS:
-        if p["needs_material"]:
-            state = "commits in window" if has_material(material) else "NO COMMITS"
+        n = pick_note(fresh, p["key"])
+        if n:
+            state = "%s: %s" % (n["source_kind"], os.path.basename(n["path"]))
+        elif "artifact" in p["allows"] and has_material(material):
+            state = "artifact: commits in window"
         else:
-            n = pick_note(fresh, p["key"])
-            state = ("note: %s" % os.path.basename(n["path"])) if n else "NO NOTE"
+            state = "NONE (accepts: %s)" % ", ".join(p["allows"])
         lines.append("  %-12s %s" % (p["key"], state))
     lines.append("")
-    lines.append("Judgment pillars need a note in notes/ with `pillar:` and `source:`")
-    lines.append("frontmatter. Without one they are not eligible and DRAFT will not")
-    lines.append("generate an opinion to fill the gap.")
+    lines.append("Every pillar needs a source of an accepted grade (§12.4). `outcome`")
+    lines.append("does not accept commits: a commit shows a change was made, not that")
+    lines.append("it helped anyone. Add a note in notes/ or use --capture.")
     return "\n".join(lines)
 
 
@@ -434,6 +532,10 @@ def main():
                    help="write a note for PILLAR from stdin and exit")
     p.add_argument("--source", metavar="ORIGIN",
                    help="provenance for --capture, e.g. 'Karthik in Buzz, event abc123'")
+    p.add_argument("--source-kind", choices=sorted(SOURCE_KINDS),
+                   help="grade of that source (§12.4), stated not guessed")
+    p.add_argument("--publishable", action="store_true",
+                   help="Karthik has said this private input can go public")
     p.add_argument("--date", help="treat this ISO date as today (for testing)")
     args = p.parse_args()
 
@@ -449,8 +551,12 @@ def main():
         if args.capture:
             if not args.source:
                 raise DraftError("--capture needs --source: where did this come from?")
-            path = capture_note(args.notes, args.capture, args.source,
-                                sys.stdin.read(), today)
+            if not args.source_kind:
+                raise DraftError(
+                    "--capture needs --source-kind (%s). The grade is stated, never "
+                    "guessed from the text of --source." % ", ".join(sorted(SOURCE_KINDS)))
+            path = capture_note(args.notes, args.capture, args.source, args.source_kind,
+                                sys.stdin.read(), today, args.publishable)
             print("wrote %s" % path)
             return 0
 
@@ -469,15 +575,15 @@ def main():
             pillar, reason = BY_KEY[args.pillar], "forced with --pillar"
             if args.pillar not in available(material, fresh):
                 raise DraftError(
-                    "%s has no source today: %s" % (
-                        args.pillar,
-                        "no commits in the window" if pillar["needs_material"]
-                        else "no unused note in %s" % args.notes))
+                    "%s has no source today. It accepts %s; there is no unused note "
+                    "in %s%s." % (
+                        args.pillar, ", ".join(pillar["allows"]), args.notes,
+                        "" if "artifact" in pillar["allows"]
+                        else " and it does not accept commits"))
         else:
             pillar, reason = select(history, today, available(material, fresh))
 
-        note = None if pillar is None or pillar["needs_material"] else \
-            pick_note(fresh, pillar["key"])
+        note = pick_note(fresh, pillar["key"]) if pillar is not None else None
 
         if pillar is not None:
             prompt = build_prompt(pillar, reason, material, note)

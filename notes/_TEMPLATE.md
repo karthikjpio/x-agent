@@ -3,10 +3,15 @@ with `_` are ignored by the loader, so this one is never treated as a note.
 
 ```
 ---
-# Choose one: decision, failure, or method
+# Choose one: decision, failure, method, client-work, or outcome
 pillar: decision
 # Be specific, for example: Karthik in Buzz, 2026-07-29
 source:
+# artifact (someone can open it), published (already public on his site or
+# profile), or private (said to the team). Stated, never guessed.
+source_kind: private
+# Only for client-work or outcome from a private source, and only if he said so
+# publishable: yes
 date: 2026-07-29
 ---
 
@@ -19,9 +24,21 @@ Who or what did it affect?
 What evidence, limitation, or unresolved question remains?
 ```
 
-`pillar` must be one of the three judgment pillars. `client-work` and `outcome`
-assert that something shipped, so they are sourced from commits and cannot be
-written by hand here.
+`source_kind` is the grade of the evidence, and it decides which pillars the note
+can back:
+
+| Grade | What it is | Can back |
+|---|---|---|
+| `artifact` | someone outside can open it: a commit, public code, a demo | `client-work` |
+| `published` | already public in his own words: site, CV, profile | any pillar |
+| `private` | said to the team, not to the public | judgment pillars; `client-work` and `outcome` only with `publishable: yes` |
+
+`outcome` never accepts `artifact`. A commit shows a change was made, not that it
+helped anyone.
+
+The grade is stated, never inferred. A `source:` that looks like a URL does not
+make a note `published`. That is how "he says so" quietly becomes "someone
+checked".
 
 The four questions are prompts, not required sections. Delete any that do not
 apply. Rough, short answers are enough; do not add a tidy lesson if the situation
@@ -39,7 +56,8 @@ becomes an invented claim there.
 You do not have to edit this file at all. If the answer already exists somewhere,
 capture it and let the origin come along with it:
 
-    printf 'what happened\n' | python3 draft.py --capture failure --source "chat, msg abc123"
+    printf 'what happened\n' | python3 draft.py --capture failure \
+        --source "chat, msg abc123" --source-kind private
 
 Lines starting with `#` inside the frontmatter are comments and are ignored, so the
 guidance above can stay where it is useful without becoming a field.

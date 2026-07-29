@@ -1,7 +1,7 @@
 # x-agent
 
-An agent that drafts posts about my work, and refuses to publish claims it cannot trace
-back to a commit.
+An agent that drafts posts about my work, and refuses to write a claim it has no source
+for.
 
 The interesting part is not the drafting. Any model writes a plausible post. The problem
 is that a plausible post about work you did not do is indistinguishable from a real one
@@ -37,6 +37,24 @@ from a dated note in `notes/` with a stated origin. No note, not eligible. The p
 the writer that the note is the whole of what it knows and that it may not add a second
 example, a broader principle, or a resolution the note does not describe.
 
+**Evidence is graded, and the grade follows the claim rather than the storage.** Requiring
+a commit for every delivery claim sounds strict and is actually just wrong: most of what I
+have shipped was built for clients and lives behind their firewall, and none of it has a
+public commit. Meanwhile a commit proves a change was made and nothing at all about whether
+it helped anyone. So a source carries one of three grades:
+
+| Grade | What it is | Can back |
+|---|---|---|
+| `artifact` | someone outside can open it: a commit, public code, a demo | delivery claims |
+| `published` | already public in my own words: site, CV, profile | any claim, restated as mine |
+| `private` | said to the team, not to the public | judgment; delivery only if I mark it publishable |
+
+The grade is stated by whoever supplies the source and is never inferred from the text. A
+`source:` that looks like a URL does not make a note `published`. That inference is exactly
+how "he says so" turns into "someone checked". The grade travels into the prompt with its
+own rules, so a published account cannot be written up as though it were independently
+verified.
+
 **Numbers are verified, not trusted.** `check.py` extracts every number in a draft and
 requires it to appear in the raw material that draft was written from. `87%` in a post
 with no `87` in the source is a blocking failure, not a style note. Numbers are the
@@ -66,17 +84,19 @@ by construction rather than by remembering to type it:
 
 ```console
 $ printf 'The staging deploy broke because...\n' \
-    | python3 draft.py --capture failure --source "Karthik in chat, msg abc123"
+    | python3 draft.py --capture failure --source "Karthik in chat, msg abc123" \
+      --source-kind private
 wrote notes/2026-07-29-failure.md
 ```
 
-`--source` is required and validation runs through the same parser as a hand-written note,
-so a captured note cannot skip a rule a typed one has to follow.
+`--source` and `--source-kind` are both required, and validation runs through the same
+parser as a hand-written note, so a captured note cannot skip a rule a typed one has to
+follow.
 
-Judgment pillars read notes from `notes/`. See `notes/_TEMPLATE.md` for the format; the
-short version is `pillar:` and a non-empty `source:` in frontmatter, then whatever
-actually happened. One note is spent by one post, so a backlog of notes drains oldest
-first instead of the same story getting written twice.
+Notes live in `notes/`. See `notes/_TEMPLATE.md` for the format; the short version is
+`pillar:`, a non-empty `source:`, and a `source_kind:`, then whatever actually happened.
+One note is spent by one post, so a backlog drains oldest first instead of the same story
+getting written twice.
 
 No dependencies. Python 3 standard library only. `gather.py` runs unauthenticated at
 about 8 requests per pass against GitHub's 60/hr anonymous cap; set `GITHUB_TOKEN` to
@@ -106,7 +126,7 @@ stays out of a public repo; only the resulting rules ship, with their evidence g
 
 ## Status
 
-`gather.py`, `draft.py`, and `check.py` are done and tested: 75 tests, no dependencies.
+`gather.py`, `draft.py`, and `check.py` are done and tested: 106 tests, no dependencies.
 
 The generation call itself is not wired. `draft.py` emits a fully specified prompt and
 stops. That is a real boundary rather than an unfinished edge: everything that decides

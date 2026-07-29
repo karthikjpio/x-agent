@@ -2,11 +2,14 @@
 """Tests for source grounding, pillar selection, and prompt construction.
 
 The property most of these exist to protect: no path through this module hands
-the writer a prompt for a claim it has no source for. That covers two claim
-types, and the second one is easier to miss. A pillar that asserts something
-shipped needs a commit. A pillar that asserts a decision, a failure, or a
-method needs a note. An empty window plus a generic prompt does not produce a
-smaller lie than a fabricated receipt, it produces a more believable one.
+the writer a prompt for a claim it has no source of an accepted grade for.
+
+Three grades (§12.4). An inspectable artifact shows what was built. Karthik's
+own published account shows what he has already said in public. Private input
+grounds judgment, and only backs a delivery claim when he has marked it safe to
+publish. The grade is always stated by whoever supplies the source, never
+inferred from the text, because inferring it is how "he says so" turns into
+"someone checked".
 
 Run: python3 -m unittest test_draft -v
 """
@@ -37,6 +40,7 @@ EMPTY = """# Raw material for 2026-07-29
 NOTE = """---
 pillar: decision
 source: Karthik in Buzz, 2026-07-29
+source_kind: private
 date: 2026-07-29
 ---
 Chose one repo with a per-platform profile over two repos. Two repos meant two
@@ -44,8 +48,8 @@ copies of the voice rules drifting apart.
 """
 
 ALL_KEYS = {p["key"] for p in draft.PILLARS}
-JUDGMENT_KEYS = {p["key"] for p in draft.PILLARS if not p["needs_material"]}
-COMMIT_KEYS = ALL_KEYS - JUDGMENT_KEYS
+ARTIFACT_KEYS = {p["key"] for p in draft.PILLARS if "artifact" in p["allows"]}
+NOTE_ONLY_KEYS = ALL_KEYS - ARTIFACT_KEYS
 
 
 def history(*pairs):
@@ -55,9 +59,15 @@ def history(*pairs):
 
 
 def note(pillar="decision", source="Karthik in Buzz", date="2026-07-29",
-         body="A body.", path="notes/n.md"):
-    return {"path": path, "pillar": pillar, "source": source, "date": date,
-            "body": body}
+         body="A body.", path="notes/n.md", kind="private", publishable=False):
+    return {"path": path, "pillar": pillar, "source": source, "source_kind": kind,
+            "publishable": publishable, "date": date, "body": body}
+
+
+def frontmatter(pillar="decision", source="chat", kind="private", extra="",
+                body="It broke."):
+    return "---\npillar: %s\nsource: %s\nsource_kind: %s\n%s---\n\n%s\n" % (
+        pillar, source, kind, extra, body)
 
 
 class TestHasMaterial(unittest.TestCase):
@@ -76,6 +86,8 @@ class TestNoteParsing(unittest.TestCase):
         n = draft.parse_note(NOTE, "notes/a.md")
         self.assertEqual(n["pillar"], "decision")
         self.assertEqual(n["source"], "Karthik in Buzz, 2026-07-29")
+        self.assertEqual(n["source_kind"], "private")
+        self.assertFalse(n["publishable"])
         self.assertIn("per-platform profile", n["body"])
 
     def test_missing_source_is_rejected(self):
@@ -100,17 +112,9 @@ class TestNoteParsing(unittest.TestCase):
         with self.assertRaises(draft.DraftError):
             draft.parse_note(text, "notes/a.md")
 
-    def test_commit_backed_pillar_cannot_be_sourced_from_a_note(self):
-        # Otherwise a note becomes a way to hand-write a receipt and skip the
-        # commit trace entirely.
-        text = NOTE.replace("pillar: decision", "pillar: client-work")
-        with self.assertRaises(draft.DraftError):
-            draft.parse_note(text, "notes/a.md")
-
     def test_body_only_whitespace_is_rejected(self):
-        text = "---\npillar: decision\nsource: chat\n---\n   \n\n"
         with self.assertRaises(draft.DraftError):
-            draft.parse_note(text, "notes/a.md")
+            draft.parse_note(frontmatter(body="   "), "notes/a.md")
 
     def test_missing_frontmatter_is_rejected(self):
         with self.assertRaises(draft.DraftError):
@@ -119,6 +123,83 @@ class TestNoteParsing(unittest.TestCase):
     def test_unterminated_frontmatter_is_rejected(self):
         with self.assertRaises(draft.DraftError):
             draft.parse_note("---\npillar: decision\nsource: chat\n", "notes/a.md")
+
+
+class TestSourceGrades(unittest.TestCase):
+    """§12.4. The gate follows the claim, not where the evidence lives."""
+
+    def test_source_kind_is_required(self):
+        text = NOTE.replace("source_kind: private\n", "")
+        with self.assertRaises(draft.DraftError):
+            draft.parse_note(text, "notes/a.md")
+
+    def test_unknown_grade_is_rejected(self):
+        with self.assertRaises(draft.DraftError):
+            draft.parse_note(frontmatter(kind="trust-me"), "notes/a.md")
+
+    def test_grade_is_never_inferred_from_a_url_shaped_source(self):
+        # A source string that looks published does not make the grade
+        # published. Honey's rule: state it, do not guess it.
+        n = draft.parse_note(
+            frontmatter(source="https://karthikjp.io", kind="private"), "notes/a.md")
+        self.assertEqual(n["source_kind"], "private")
+
+    def test_published_account_can_ground_a_delivery_claim(self):
+        # The four EY systems: real production work, no public commit.
+        n = draft.parse_note(
+            frontmatter(pillar="client-work", source="karthikjp.io", kind="published",
+                        body="Shipped due-diligence agents used by M&A teams."),
+            "notes/a.md")
+        self.assertEqual(n["pillar"], "client-work")
+
+    def test_published_account_can_ground_an_outcome(self):
+        n = draft.parse_note(
+            frontmatter(pillar="outcome", source="karthikjavanappa.com",
+                        kind="published", body="Found in seconds instead of hours."),
+            "notes/a.md")
+        self.assertEqual(n["pillar"], "outcome")
+
+    def test_private_input_alone_cannot_ground_a_delivery_claim(self):
+        for pillar in sorted(draft.DELIVERY_PILLARS):
+            with self.assertRaises(draft.DraftError):
+                draft.parse_note(frontmatter(pillar=pillar, kind="private"),
+                                 "notes/a.md")
+
+    def test_private_input_grounds_delivery_once_marked_publishable(self):
+        for pillar in sorted(draft.DELIVERY_PILLARS):
+            n = draft.parse_note(
+                frontmatter(pillar=pillar, kind="private", extra="publishable: yes\n"),
+                "notes/a.md")
+            self.assertTrue(n["publishable"])
+
+    def test_publishable_is_ignored_unless_explicitly_affirmative(self):
+        for value in ("no", "false", "maybe", ""):
+            with self.assertRaises(draft.DraftError):
+                draft.parse_note(
+                    frontmatter(pillar="outcome", kind="private",
+                                extra="publishable: %s\n" % value), "notes/a.md")
+
+    def test_an_artifact_cannot_ground_an_outcome(self):
+        # A commit proves a change was made and nothing about whether it helped
+        # anyone. This was in the shape note as prose while the gate let it
+        # through anyway.
+        self.assertNotIn("artifact", draft.BY_KEY["outcome"]["allows"])
+        with self.assertRaises(draft.DraftError):
+            draft.parse_note(frontmatter(pillar="outcome", kind="artifact"),
+                             "notes/a.md")
+
+    def test_an_artifact_cannot_ground_a_judgment_pillar(self):
+        # A commit list does not contain the reasoning behind a decision.
+        for pillar in ("decision", "failure", "method"):
+            with self.assertRaises(draft.DraftError):
+                draft.parse_note(frontmatter(pillar=pillar, kind="artifact"),
+                                 "notes/a.md")
+
+    def test_an_artifact_can_ground_a_delivery_claim(self):
+        n = draft.parse_note(
+            frontmatter(pillar="client-work", source="github.com/x/y commit abc",
+                        kind="artifact"), "notes/a.md")
+        self.assertEqual(n["source_kind"], "artifact")
 
 
 class TestFrontmatterComments(unittest.TestCase):
@@ -131,20 +212,22 @@ class TestFrontmatterComments(unittest.TestCase):
                 "pillar: decision\n"
                 "# Be specific, for example: Karthik in Buzz, 2026-07-29\n"
                 "source: Karthik in Buzz, 2026-07-29\n"
+                "source_kind: private\n"
                 "---\n\nIt broke.\n")
         n = draft.parse_note(text, "notes/a.md")
         self.assertEqual(n["pillar"], "decision")
         self.assertEqual(n["source"], "Karthik in Buzz, 2026-07-29")
 
     def test_a_comment_without_a_colon_is_not_a_parse_error(self):
-        text = ("---\n# choose one\npillar: failure\nsource: chat\n---\n\nIt broke.\n")
+        text = ("---\n# choose one\npillar: failure\nsource: chat\n"
+                "source_kind: private\n---\n\nIt broke.\n")
         self.assertEqual(draft.parse_note(text, "notes/a.md")["pillar"], "failure")
 
     def test_a_commented_out_source_does_not_count_as_a_source(self):
         # Copying the template without filling it in must fail, not pass with
         # the example value from the comment.
         text = ("---\n# for example: Karthik in Buzz\npillar: decision\n"
-                "source:\n---\n\nIt broke.\n")
+                "source:\nsource_kind: private\n---\n\nIt broke.\n")
         with self.assertRaises(draft.DraftError):
             draft.parse_note(text, "notes/a.md")
 
@@ -154,7 +237,8 @@ class TestFrontmatterComments(unittest.TestCase):
                             "notes", "_TEMPLATE.md")
         with open(path) as f:
             inner = f.read().split("```")[1]
-        filled = inner.replace("source:", "source: Karthik in Buzz").strip() + "\nIt broke.\n"
+        filled = (inner.replace("source:", "source: Karthik in Buzz", 1).strip()
+                  + "\nIt broke.\n")
         self.assertEqual(draft.parse_note(filled, "notes/a.md")["pillar"], "decision")
         with self.assertRaises(draft.DraftError):
             draft.parse_note(inner.strip(), "notes/a.md")
@@ -164,47 +248,61 @@ class TestCapture(unittest.TestCase):
     def test_captured_note_is_loadable_by_the_normal_path(self):
         with tempfile.TemporaryDirectory() as d:
             path = draft.capture_note(d, "failure", "Karthik in Buzz, event abc123",
-                                      "The gate passed a blank draft.", TODAY)
+                                      "private", "The gate passed a blank draft.", TODAY)
             loaded = draft.load_notes(d)
             self.assertEqual(len(loaded), 1)
             self.assertEqual(loaded[0]["path"], path)
             self.assertEqual(loaded[0]["source"], "Karthik in Buzz, event abc123")
+            self.assertEqual(loaded[0]["source_kind"], "private")
             self.assertIn("blank draft", loaded[0]["body"])
             self.assertEqual(loaded[0]["date"], TODAY.isoformat())
 
     def test_capture_unlocks_exactly_one_pillar(self):
         with tempfile.TemporaryDirectory() as d:
-            draft.capture_note(d, "method", "Karthik in Buzz", "Do it this way.", TODAY)
+            draft.capture_note(d, "method", "Karthik in Buzz", "private",
+                               "Do it this way.", TODAY)
             self.assertEqual(draft.available(EMPTY, draft.load_notes(d)), {"method"})
 
-    def test_capture_rejects_a_commit_backed_pillar(self):
+    def test_capture_enforces_the_same_grade_rules_as_a_typed_note(self):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(draft.DraftError):
-                draft.capture_note(d, "client-work", "chat", "We shipped it.", TODAY)
-            self.assertEqual(draft.load_notes(d), [])
+                draft.capture_note(d, "outcome", "chat", "private", "It worked.", TODAY)
+            self.assertEqual(os.listdir(d), [])
+            path = draft.capture_note(d, "outcome", "chat", "private", "It worked.",
+                                      TODAY, publishable=True)
+            self.assertTrue(draft.load_notes(d)[0]["publishable"])
+            self.assertTrue(os.path.exists(path))
+
+    def test_capture_rejects_an_unknown_grade(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(draft.DraftError):
+                draft.capture_note(d, "failure", "chat", "vibes", "It broke.", TODAY)
 
     def test_capture_rejects_an_empty_source(self):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(draft.DraftError):
-                draft.capture_note(d, "failure", "", "It broke.", TODAY)
+                draft.capture_note(d, "failure", "", "private", "It broke.", TODAY)
 
     def test_capture_rejects_an_empty_body(self):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(draft.DraftError):
-                draft.capture_note(d, "failure", "chat", "   \n\n", TODAY)
+                draft.capture_note(d, "failure", "chat", "private", "   \n\n", TODAY)
 
     def test_nothing_is_written_when_validation_fails(self):
         with tempfile.TemporaryDirectory() as d:
-            for bad in [("outcome", "chat", "x"), ("failure", "", "x"),
-                        ("nope", "chat", "x"), ("failure", "chat", "")]:
+            for bad in [("outcome", "chat", "artifact", "x"),
+                        ("failure", "", "private", "x"),
+                        ("nope", "chat", "private", "x"),
+                        ("failure", "chat", "private", ""),
+                        ("failure", "chat", "artifact", "x")]:
                 with self.assertRaises(draft.DraftError):
-                    draft.capture_note(d, bad[0], bad[1], bad[2], TODAY)
+                    draft.capture_note(d, bad[0], bad[1], bad[2], bad[3], TODAY)
             self.assertEqual(os.listdir(d), [])
 
     def test_a_second_note_the_same_day_does_not_clobber_the_first(self):
         with tempfile.TemporaryDirectory() as d:
-            a = draft.capture_note(d, "failure", "chat", "First.", TODAY)
-            b = draft.capture_note(d, "failure", "chat", "Second.", TODAY)
+            a = draft.capture_note(d, "failure", "chat", "private", "First.", TODAY)
+            b = draft.capture_note(d, "failure", "chat", "private", "Second.", TODAY)
             self.assertNotEqual(a, b)
             bodies = sorted(n["body"] for n in draft.load_notes(d))
             self.assertEqual(bodies, ["First.", "Second."])
@@ -236,8 +334,15 @@ class TestLoadNotes(unittest.TestCase):
 
 
 class TestAvailability(unittest.TestCase):
-    def test_material_alone_unlocks_only_commit_pillars(self):
-        self.assertEqual(draft.available(MATERIAL, []), COMMIT_KEYS)
+    def test_material_alone_unlocks_only_artifact_pillars(self):
+        self.assertEqual(draft.available(MATERIAL, []), ARTIFACT_KEYS)
+
+    def test_outcome_is_not_unlocked_by_commits(self):
+        self.assertNotIn("outcome", draft.available(MATERIAL, []))
+
+    def test_a_published_note_unlocks_outcome_with_no_commits_at_all(self):
+        n = note("outcome", kind="published")
+        self.assertIn("outcome", draft.available(EMPTY, [n]))
 
     def test_notes_alone_unlock_only_their_own_pillars(self):
         self.assertEqual(draft.available(EMPTY, [note("failure")]), {"failure"})
@@ -266,34 +371,33 @@ class TestSelection(unittest.TestCase):
         pillar, _ = draft.select([], TODAY, ALL_KEYS)
         self.assertEqual(pillar["key"], "client-work")
 
-    def test_skips_commit_pillars_when_no_material(self):
-        pillar, _ = draft.select([], TODAY, JUDGMENT_KEYS)
-        self.assertFalse(pillar["needs_material"])
+    def test_skips_artifact_pillars_when_no_material(self):
+        pillar, _ = draft.select([], TODAY, NOTE_ONLY_KEYS)
         self.assertEqual(pillar["key"], "decision")
 
-    def test_never_returns_a_commit_pillar_without_material(self):
+    def test_never_returns_an_artifact_pillar_without_material(self):
         # No path through selection produces a pillar asserting a shipped thing
         # when nothing shipped. Walk the whole rotation, not one case.
         h = []
         for _ in range(12):
-            pillar, _ = draft.select(h, TODAY, JUDGMENT_KEYS)
+            pillar, _ = draft.select(h, TODAY, NOTE_ONLY_KEYS)
             if pillar is None:
                 break
-            self.assertFalse(pillar["needs_material"], pillar["key"])
+            self.assertNotIn(pillar["key"], ARTIFACT_KEYS)
             h.append({"date": TODAY.isoformat(), "pillar": pillar["key"]})
 
-    def test_never_returns_a_judgment_pillar_without_a_note(self):
+    def test_never_returns_a_note_only_pillar_without_a_note(self):
         # The gap Honey caught: refusing to invent a shipment while happily
         # inventing an opinion. Same walk, other direction.
         h = []
         for _ in range(12):
-            pillar, _ = draft.select(h, TODAY, COMMIT_KEYS)
+            pillar, _ = draft.select(h, TODAY, ARTIFACT_KEYS)
             if pillar is None:
                 break
-            self.assertTrue(pillar["needs_material"], pillar["key"])
+            self.assertIn(pillar["key"], ARTIFACT_KEYS)
             h.append({"date": TODAY.isoformat(), "pillar": pillar["key"]})
 
-    def test_only_the_sourced_judgment_pillar_is_reachable(self):
+    def test_only_the_sourced_pillar_is_reachable(self):
         # A note for `failure` does not make `decision` or `method` eligible,
         # even though they are the same kind of pillar and further under quota.
         h = []
@@ -366,42 +470,87 @@ class TestSelection(unittest.TestCase):
 
 
 class TestPrompt(unittest.TestCase):
-    def test_commit_pillar_embeds_material_and_demands_tracing(self):
+    def test_artifact_pillar_embeds_material_and_demands_tracing(self):
         prompt = draft.build_prompt(draft.BY_KEY["client-work"], "test", MATERIAL)
         self.assertIn("a1b2c3d", prompt)
         self.assertIn("must trace", prompt)
 
-    def test_commit_pillar_refuses_an_empty_window(self):
+    def test_artifact_pillar_refuses_an_empty_window(self):
         with self.assertRaises(draft.DraftError):
             draft.build_prompt(draft.BY_KEY["client-work"], "test", EMPTY)
 
-    def test_commit_pillar_refuses_a_missing_file(self):
+    def test_outcome_refuses_to_build_from_commits(self):
         with self.assertRaises(draft.DraftError):
-            draft.build_prompt(draft.BY_KEY["outcome"], "test", None)
+            draft.build_prompt(draft.BY_KEY["outcome"], "test", MATERIAL)
 
-    def test_judgment_pillar_refuses_to_build_without_a_note(self):
+    def test_note_only_pillar_refuses_to_build_without_a_note(self):
         with self.assertRaises(draft.DraftError):
             draft.build_prompt(draft.BY_KEY["decision"], "test", MATERIAL)
 
-    def test_judgment_pillar_embeds_the_note_and_its_origin(self):
+    def test_a_mismatched_note_is_refused(self):
+        with self.assertRaises(draft.DraftError):
+            draft.build_prompt(draft.BY_KEY["failure"], "test", None, note("decision"))
+
+    def test_the_grade_travels_into_the_prompt(self):
+        for kind in ("artifact", "published", "private"):
+            pillar = draft.BY_KEY["client-work"]
+            n = note("client-work", kind=kind, publishable=True)
+            prompt = draft.build_prompt(pillar, "test", None, n)
+            self.assertIn(draft.SOURCE_KINDS[kind]["label"], prompt)
+
+    def test_published_grade_warns_against_implying_verification(self):
+        n = note("client-work", kind="published", source="karthikjp.io")
+        prompt = draft.build_prompt(draft.BY_KEY["client-work"], "test", None, n)
+        self.assertIn("not independent verification", prompt)
+        self.assertIn("may not add client names", prompt)
+        self.assertIn("publicly inspectable", prompt)
+
+    def test_artifact_grade_says_it_is_not_a_business_result(self):
+        prompt = draft.build_prompt(draft.BY_KEY["client-work"], "test", MATERIAL)
+        self.assertIn("does not show a business result", prompt)
+
+    def test_publishable_marking_is_stated_to_the_writer(self):
+        n = note("outcome", kind="private", publishable=True)
+        prompt = draft.build_prompt(draft.BY_KEY["outcome"], "test", None, n)
+        self.assertIn("marked this safe to publish", prompt)
+
+    def test_note_prompt_embeds_the_note_and_its_origin(self):
         n = draft.parse_note(NOTE, "notes/a.md")
         prompt = draft.build_prompt(draft.BY_KEY["decision"], "test", EMPTY, n)
         self.assertIn("per-platform profile", prompt)
         self.assertIn("Karthik in Buzz", prompt)
         self.assertIn("notes/a.md", prompt)
 
-    def test_judgment_pillar_forbids_widening_the_note(self):
+    def test_note_prompt_forbids_widening_the_note(self):
         n = draft.parse_note(NOTE, "notes/a.md")
         prompt = draft.build_prompt(draft.BY_KEY["decision"], "test", EMPTY, n)
-        self.assertIn("Do not add a", prompt)
+        self.assertIn("Do not", prompt)
+        self.assertIn("add a second example", prompt)
 
-    def test_judgment_pillar_marks_commits_as_background_only(self):
+    def test_note_prompt_marks_commits_as_background_only(self):
         n = draft.parse_note(NOTE, "notes/a.md")
         prompt = draft.build_prompt(draft.BY_KEY["decision"], "test", MATERIAL, n)
         self.assertIn("background only", prompt)
         self.assertIn("a1b2c3d", prompt)
 
-    def test_judgment_pillar_omits_an_empty_window_entirely(self):
+    def test_background_commits_do_not_smuggle_in_their_own_instructions(self):
+        # GATHER ends with "every claim must trace to a commit". True when
+        # commits are the source, wrong when they are background under a note
+        # of another grade, and it is the more emphatic of the two.
+        material = MATERIAL + (
+            "\n## Notes for drafting\n\n- Every claim in a post must trace to a "
+            "commit above.\n")
+        n = note("outcome", kind="published")
+        prompt = draft.build_prompt(draft.BY_KEY["outcome"], "test", material, n)
+        self.assertIn("a1b2c3d", prompt)
+        self.assertNotIn("Notes for drafting", prompt)
+        self.assertNotIn("must trace to a commit above", prompt)
+        self.assertIn("provenance", prompt.lower())
+
+    def test_background_stripping_leaves_a_plain_file_alone(self):
+        self.assertEqual(draft.as_background(MATERIAL), MATERIAL.strip())
+
+    def test_note_prompt_omits_an_empty_window_entirely(self):
         n = draft.parse_note(NOTE, "notes/a.md")
         prompt = draft.build_prompt(draft.BY_KEY["decision"], "test", EMPTY, n)
         self.assertNotIn("No public commits", prompt)
@@ -414,7 +563,8 @@ class TestPrompt(unittest.TestCase):
         self.assertIn("Every number must appear", prompt)
 
     def test_shape_note_reaches_the_writer(self):
-        prompt = draft.build_prompt(draft.BY_KEY["outcome"], "test", MATERIAL)
+        n = note("outcome", kind="published")
+        prompt = draft.build_prompt(draft.BY_KEY["outcome"], "test", None, n)
         self.assertIn("Never infer a business result", prompt)
 
     def test_selection_reason_is_stated(self):
