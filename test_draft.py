@@ -1,0 +1,471 @@
+#!/usr/bin/env python3
+"""Tests for source grounding, pillar selection, and prompt construction.
+
+The property most of these exist to protect: no path through this module hands
+the writer a prompt for a claim it has no source for. That covers two claim
+types, and the second one is easier to miss. A pillar that asserts something
+shipped needs a commit. A pillar that asserts a decision, a failure, or a
+method needs a note. An empty window plus a generic prompt does not produce a
+smaller lie than a fabricated receipt, it produces a more believable one.
+
+Run: python3 -m unittest test_draft -v
+"""
+
+import datetime as dt
+import json
+import os
+import tempfile
+import unittest
+
+import draft
+
+TODAY = dt.date(2026, 7, 29)
+
+MATERIAL = """# Raw material for 2026-07-29
+
+## `parivartane`
+- **2026-07-07** `a1b2c3d` Redirect booking CTAs to WhatsApp DM
+"""
+
+EMPTY = """# Raw material for 2026-07-29
+
+## No public commits in this window
+
+0 commits found between 2026-07-15 and today.
+"""
+
+NOTE = """---
+pillar: decision
+source: Karthik in Buzz, 2026-07-29
+date: 2026-07-29
+---
+Chose one repo with a per-platform profile over two repos. Two repos meant two
+copies of the voice rules drifting apart.
+"""
+
+ALL_KEYS = {p["key"] for p in draft.PILLARS}
+JUDGMENT_KEYS = {p["key"] for p in draft.PILLARS if not p["needs_material"]}
+COMMIT_KEYS = ALL_KEYS - JUDGMENT_KEYS
+
+
+def history(*pairs):
+    """history(('client-work', 1), ...) -> N days ago."""
+    return [{"date": (TODAY - dt.timedelta(days=ago)).isoformat(), "pillar": key}
+            for key, ago in pairs]
+
+
+def note(pillar="decision", source="Karthik in Buzz", date="2026-07-29",
+         body="A body.", path="notes/n.md"):
+    return {"path": path, "pillar": pillar, "source": source, "date": date,
+            "body": body}
+
+
+class TestHasMaterial(unittest.TestCase):
+    def test_commits_present(self):
+        self.assertTrue(draft.has_material(MATERIAL))
+
+    def test_empty_window_detected(self):
+        self.assertFalse(draft.has_material(EMPTY))
+
+    def test_missing_file_is_not_material(self):
+        self.assertFalse(draft.has_material(None))
+
+
+class TestNoteParsing(unittest.TestCase):
+    def test_valid_note_round_trips(self):
+        n = draft.parse_note(NOTE, "notes/a.md")
+        self.assertEqual(n["pillar"], "decision")
+        self.assertEqual(n["source"], "Karthik in Buzz, 2026-07-29")
+        self.assertIn("per-platform profile", n["body"])
+
+    def test_missing_source_is_rejected(self):
+        # Provenance is the whole point. A note with no stated origin cannot be
+        # graded, and an ungraded source is how agent prose ships as his.
+        text = NOTE.replace("source: Karthik in Buzz, 2026-07-29\n", "")
+        with self.assertRaises(draft.DraftError):
+            draft.parse_note(text, "notes/a.md")
+
+    def test_empty_source_is_rejected(self):
+        text = NOTE.replace("source: Karthik in Buzz, 2026-07-29", "source:")
+        with self.assertRaises(draft.DraftError):
+            draft.parse_note(text, "notes/a.md")
+
+    def test_missing_pillar_is_rejected(self):
+        text = NOTE.replace("pillar: decision\n", "")
+        with self.assertRaises(draft.DraftError):
+            draft.parse_note(text, "notes/a.md")
+
+    def test_unknown_pillar_is_rejected(self):
+        text = NOTE.replace("pillar: decision", "pillar: hot-takes")
+        with self.assertRaises(draft.DraftError):
+            draft.parse_note(text, "notes/a.md")
+
+    def test_commit_backed_pillar_cannot_be_sourced_from_a_note(self):
+        # Otherwise a note becomes a way to hand-write a receipt and skip the
+        # commit trace entirely.
+        text = NOTE.replace("pillar: decision", "pillar: client-work")
+        with self.assertRaises(draft.DraftError):
+            draft.parse_note(text, "notes/a.md")
+
+    def test_body_only_whitespace_is_rejected(self):
+        text = "---\npillar: decision\nsource: chat\n---\n   \n\n"
+        with self.assertRaises(draft.DraftError):
+            draft.parse_note(text, "notes/a.md")
+
+    def test_missing_frontmatter_is_rejected(self):
+        with self.assertRaises(draft.DraftError):
+            draft.parse_note("just a body\n", "notes/a.md")
+
+    def test_unterminated_frontmatter_is_rejected(self):
+        with self.assertRaises(draft.DraftError):
+            draft.parse_note("---\npillar: decision\nsource: chat\n", "notes/a.md")
+
+
+class TestFrontmatterComments(unittest.TestCase):
+    """The template carries its instructions inline, so a copied instruction
+    must not become a key or a hard failure."""
+
+    def test_comment_lines_are_ignored(self):
+        text = ("---\n"
+                "# Choose one: decision, failure, or method\n"
+                "pillar: decision\n"
+                "# Be specific, for example: Karthik in Buzz, 2026-07-29\n"
+                "source: Karthik in Buzz, 2026-07-29\n"
+                "---\n\nIt broke.\n")
+        n = draft.parse_note(text, "notes/a.md")
+        self.assertEqual(n["pillar"], "decision")
+        self.assertEqual(n["source"], "Karthik in Buzz, 2026-07-29")
+
+    def test_a_comment_without_a_colon_is_not_a_parse_error(self):
+        text = ("---\n# choose one\npillar: failure\nsource: chat\n---\n\nIt broke.\n")
+        self.assertEqual(draft.parse_note(text, "notes/a.md")["pillar"], "failure")
+
+    def test_a_commented_out_source_does_not_count_as_a_source(self):
+        # Copying the template without filling it in must fail, not pass with
+        # the example value from the comment.
+        text = ("---\n# for example: Karthik in Buzz\npillar: decision\n"
+                "source:\n---\n\nIt broke.\n")
+        with self.assertRaises(draft.DraftError):
+            draft.parse_note(text, "notes/a.md")
+
+    def test_the_shipped_template_round_trips_once_filled_in(self):
+        # Guards the template and the parser against drifting apart.
+        path = os.path.join(os.path.dirname(os.path.abspath(draft.__file__)),
+                            "notes", "_TEMPLATE.md")
+        with open(path) as f:
+            inner = f.read().split("```")[1]
+        filled = inner.replace("source:", "source: Karthik in Buzz").strip() + "\nIt broke.\n"
+        self.assertEqual(draft.parse_note(filled, "notes/a.md")["pillar"], "decision")
+        with self.assertRaises(draft.DraftError):
+            draft.parse_note(inner.strip(), "notes/a.md")
+
+
+class TestCapture(unittest.TestCase):
+    def test_captured_note_is_loadable_by_the_normal_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = draft.capture_note(d, "failure", "Karthik in Buzz, event abc123",
+                                      "The gate passed a blank draft.", TODAY)
+            loaded = draft.load_notes(d)
+            self.assertEqual(len(loaded), 1)
+            self.assertEqual(loaded[0]["path"], path)
+            self.assertEqual(loaded[0]["source"], "Karthik in Buzz, event abc123")
+            self.assertIn("blank draft", loaded[0]["body"])
+            self.assertEqual(loaded[0]["date"], TODAY.isoformat())
+
+    def test_capture_unlocks_exactly_one_pillar(self):
+        with tempfile.TemporaryDirectory() as d:
+            draft.capture_note(d, "method", "Karthik in Buzz", "Do it this way.", TODAY)
+            self.assertEqual(draft.available(EMPTY, draft.load_notes(d)), {"method"})
+
+    def test_capture_rejects_a_commit_backed_pillar(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(draft.DraftError):
+                draft.capture_note(d, "client-work", "chat", "We shipped it.", TODAY)
+            self.assertEqual(draft.load_notes(d), [])
+
+    def test_capture_rejects_an_empty_source(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(draft.DraftError):
+                draft.capture_note(d, "failure", "", "It broke.", TODAY)
+
+    def test_capture_rejects_an_empty_body(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(draft.DraftError):
+                draft.capture_note(d, "failure", "chat", "   \n\n", TODAY)
+
+    def test_nothing_is_written_when_validation_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            for bad in [("outcome", "chat", "x"), ("failure", "", "x"),
+                        ("nope", "chat", "x"), ("failure", "chat", "")]:
+                with self.assertRaises(draft.DraftError):
+                    draft.capture_note(d, bad[0], bad[1], bad[2], TODAY)
+            self.assertEqual(os.listdir(d), [])
+
+    def test_a_second_note_the_same_day_does_not_clobber_the_first(self):
+        with tempfile.TemporaryDirectory() as d:
+            a = draft.capture_note(d, "failure", "chat", "First.", TODAY)
+            b = draft.capture_note(d, "failure", "chat", "Second.", TODAY)
+            self.assertNotEqual(a, b)
+            bodies = sorted(n["body"] for n in draft.load_notes(d))
+            self.assertEqual(bodies, ["First.", "Second."])
+
+
+class TestLoadNotes(unittest.TestCase):
+    def test_missing_directory_is_not_an_error(self):
+        self.assertEqual(draft.load_notes("/nonexistent/notes"), [])
+
+    def test_non_markdown_and_template_files_are_skipped(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "a.md"), "w") as f:
+                f.write(NOTE)
+            with open(os.path.join(d, "notes.txt"), "w") as f:
+                f.write("not a note")
+            with open(os.path.join(d, "_TEMPLATE.md"), "w") as f:
+                f.write("fill this in\n")   # deliberately not parseable
+            loaded = draft.load_notes(d)
+            self.assertEqual([os.path.basename(n["path"]) for n in loaded], ["a.md"])
+
+    def test_a_malformed_note_fails_loudly(self):
+        # Silently dropping it would make a pillar look sourceless for a reason
+        # nobody can see.
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "bad.md"), "w") as f:
+                f.write("no frontmatter here\n")
+            with self.assertRaises(draft.DraftError):
+                draft.load_notes(d)
+
+
+class TestAvailability(unittest.TestCase):
+    def test_material_alone_unlocks_only_commit_pillars(self):
+        self.assertEqual(draft.available(MATERIAL, []), COMMIT_KEYS)
+
+    def test_notes_alone_unlock_only_their_own_pillars(self):
+        self.assertEqual(draft.available(EMPTY, [note("failure")]), {"failure"})
+
+    def test_nothing_available_is_the_empty_set(self):
+        self.assertEqual(draft.available(EMPTY, []), set())
+        self.assertEqual(draft.available(None, []), set())
+
+    def test_spent_notes_are_not_available_again(self):
+        n = note(path="notes/a.md")
+        spent = [{"date": TODAY.isoformat(), "pillar": "decision", "note": "notes/a.md"}]
+        self.assertEqual(draft.unused_notes([n], spent), [])
+        self.assertEqual(draft.unused_notes([n], []), [n])
+
+    def test_oldest_unused_note_is_picked_first(self):
+        old = note(date="2026-07-01", path="notes/old.md")
+        new = note(date="2026-07-29", path="notes/new.md")
+        self.assertEqual(draft.pick_note([new, old], "decision")["path"], "notes/old.md")
+
+    def test_pick_note_ignores_other_pillars(self):
+        self.assertIsNone(draft.pick_note([note("failure")], "method"))
+
+
+class TestSelection(unittest.TestCase):
+    def test_empty_history_picks_highest_quota_pillar(self):
+        pillar, _ = draft.select([], TODAY, ALL_KEYS)
+        self.assertEqual(pillar["key"], "client-work")
+
+    def test_skips_commit_pillars_when_no_material(self):
+        pillar, _ = draft.select([], TODAY, JUDGMENT_KEYS)
+        self.assertFalse(pillar["needs_material"])
+        self.assertEqual(pillar["key"], "decision")
+
+    def test_never_returns_a_commit_pillar_without_material(self):
+        # No path through selection produces a pillar asserting a shipped thing
+        # when nothing shipped. Walk the whole rotation, not one case.
+        h = []
+        for _ in range(12):
+            pillar, _ = draft.select(h, TODAY, JUDGMENT_KEYS)
+            if pillar is None:
+                break
+            self.assertFalse(pillar["needs_material"], pillar["key"])
+            h.append({"date": TODAY.isoformat(), "pillar": pillar["key"]})
+
+    def test_never_returns_a_judgment_pillar_without_a_note(self):
+        # The gap Honey caught: refusing to invent a shipment while happily
+        # inventing an opinion. Same walk, other direction.
+        h = []
+        for _ in range(12):
+            pillar, _ = draft.select(h, TODAY, COMMIT_KEYS)
+            if pillar is None:
+                break
+            self.assertTrue(pillar["needs_material"], pillar["key"])
+            h.append({"date": TODAY.isoformat(), "pillar": pillar["key"]})
+
+    def test_only_the_sourced_judgment_pillar_is_reachable(self):
+        # A note for `failure` does not make `decision` or `method` eligible,
+        # even though they are the same kind of pillar and further under quota.
+        h = []
+        for _ in range(12):
+            pillar, _ = draft.select(h, TODAY, {"failure"})
+            if pillar is None:
+                break
+            self.assertEqual(pillar["key"], "failure")
+            h.append({"date": TODAY.isoformat(), "pillar": pillar["key"]})
+
+    def test_no_source_at_all_returns_none_and_says_why(self):
+        pillar, reason = draft.select([], TODAY, set())
+        self.assertIsNone(pillar)
+        self.assertIn("no source", reason)
+
+    def test_unmet_pillars_without_a_source_are_reported_as_such(self):
+        h = history(("decision", 1), ("decision", 2))
+        pillar, reason = draft.select(h, TODAY, {"decision"})
+        self.assertIsNone(pillar)
+        self.assertIn("no source today", reason)
+        self.assertIn("client-work", reason)
+
+    def test_all_quotas_met_returns_none(self):
+        h = history(("client-work", 1), ("client-work", 2), ("decision", 1),
+                    ("decision", 2), ("outcome", 3), ("failure", 3), ("method", 4))
+        pillar, reason = draft.select(h, TODAY, ALL_KEYS)
+        self.assertIsNone(pillar)
+        self.assertIn("quota", reason)
+
+    def test_partly_used_quota_still_eligible(self):
+        h = history(("client-work", 1), ("decision", 1), ("decision", 2),
+                    ("outcome", 3), ("failure", 3), ("method", 4))
+        pillar, reason = draft.select(h, TODAY, ALL_KEYS)
+        self.assertEqual(pillar["key"], "client-work")
+        self.assertIn("1 of 2", reason)
+
+    def test_rotation_spreads_rather_than_draining_one_pillar(self):
+        h = history(("client-work", 0))
+        pillar, _ = draft.select(h, TODAY, ALL_KEYS)
+        self.assertEqual(pillar["key"], "decision")
+
+    def test_a_full_week_covers_every_pillar_to_quota(self):
+        h = []
+        for _ in range(7):
+            pillar, _ = draft.select(h, TODAY, ALL_KEYS)
+            self.assertIsNotNone(pillar)
+            h.append({"date": TODAY.isoformat(), "pillar": pillar["key"]})
+        counts = {}
+        for row in h:
+            counts[row["pillar"]] = counts.get(row["pillar"], 0) + 1
+        self.assertEqual(counts, {p["key"]: p["quota"] for p in draft.PILLARS})
+        self.assertIsNone(draft.select(h, TODAY, ALL_KEYS)[0])
+
+    def test_history_outside_window_does_not_count(self):
+        h = history(("client-work", 30), ("client-work", 40))
+        pillar, _ = draft.select(h, TODAY, ALL_KEYS)
+        self.assertEqual(pillar["key"], "client-work")
+
+    def test_ties_break_toward_least_recently_used(self):
+        h = history(("client-work", 1), ("client-work", 2),
+                    ("decision", 1), ("decision", 2), ("outcome", 3),
+                    ("method", 30))
+        pillar, _ = draft.select(h, TODAY, ALL_KEYS)
+        self.assertEqual(pillar["key"], "failure")
+
+    def test_malformed_history_rows_are_skipped_not_fatal(self):
+        h = [{"date": "not-a-date", "pillar": "decision"}, {"pillar": "decision"}, {}]
+        pillar, _ = draft.select(h, TODAY, ALL_KEYS)
+        self.assertEqual(pillar["key"], "client-work")
+
+
+class TestPrompt(unittest.TestCase):
+    def test_commit_pillar_embeds_material_and_demands_tracing(self):
+        prompt = draft.build_prompt(draft.BY_KEY["client-work"], "test", MATERIAL)
+        self.assertIn("a1b2c3d", prompt)
+        self.assertIn("must trace", prompt)
+
+    def test_commit_pillar_refuses_an_empty_window(self):
+        with self.assertRaises(draft.DraftError):
+            draft.build_prompt(draft.BY_KEY["client-work"], "test", EMPTY)
+
+    def test_commit_pillar_refuses_a_missing_file(self):
+        with self.assertRaises(draft.DraftError):
+            draft.build_prompt(draft.BY_KEY["outcome"], "test", None)
+
+    def test_judgment_pillar_refuses_to_build_without_a_note(self):
+        with self.assertRaises(draft.DraftError):
+            draft.build_prompt(draft.BY_KEY["decision"], "test", MATERIAL)
+
+    def test_judgment_pillar_embeds_the_note_and_its_origin(self):
+        n = draft.parse_note(NOTE, "notes/a.md")
+        prompt = draft.build_prompt(draft.BY_KEY["decision"], "test", EMPTY, n)
+        self.assertIn("per-platform profile", prompt)
+        self.assertIn("Karthik in Buzz", prompt)
+        self.assertIn("notes/a.md", prompt)
+
+    def test_judgment_pillar_forbids_widening_the_note(self):
+        n = draft.parse_note(NOTE, "notes/a.md")
+        prompt = draft.build_prompt(draft.BY_KEY["decision"], "test", EMPTY, n)
+        self.assertIn("Do not add a", prompt)
+
+    def test_judgment_pillar_marks_commits_as_background_only(self):
+        n = draft.parse_note(NOTE, "notes/a.md")
+        prompt = draft.build_prompt(draft.BY_KEY["decision"], "test", MATERIAL, n)
+        self.assertIn("background only", prompt)
+        self.assertIn("a1b2c3d", prompt)
+
+    def test_judgment_pillar_omits_an_empty_window_entirely(self):
+        n = draft.parse_note(NOTE, "notes/a.md")
+        prompt = draft.build_prompt(draft.BY_KEY["decision"], "test", EMPTY, n)
+        self.assertNotIn("No public commits", prompt)
+
+    def test_voice_rules_are_carried_into_the_prompt(self):
+        n = draft.parse_note(NOTE, "notes/a.md")
+        prompt = draft.build_prompt(draft.BY_KEY["decision"], "test", None, n)
+        self.assertIn("No emoji", prompt)
+        self.assertIn("em dashes", prompt)
+        self.assertIn("Every number must appear", prompt)
+
+    def test_shape_note_reaches_the_writer(self):
+        prompt = draft.build_prompt(draft.BY_KEY["outcome"], "test", MATERIAL)
+        self.assertIn("Never infer a business result", prompt)
+
+    def test_selection_reason_is_stated(self):
+        prompt = draft.build_prompt(draft.BY_KEY["client-work"], "0 of 2 done", MATERIAL)
+        self.assertIn("0 of 2 done", prompt)
+
+
+class TestHistoryFile(unittest.TestCase):
+    def test_missing_history_is_empty_not_an_error(self):
+        self.assertEqual(draft.load_history("/nonexistent/history.json"), [])
+
+    def test_record_then_load_round_trips(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "state", "history.json")
+            draft.record(path, "failure", TODAY)
+            draft.record(path, "method", TODAY)
+            loaded = draft.load_history(path)
+            self.assertEqual([r["pillar"] for r in loaded], ["failure", "method"])
+
+    def test_recording_a_note_spends_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "history.json")
+            n = note(path="notes/a.md")
+            draft.record(path, "decision", TODAY, "notes/a.md")
+            self.assertEqual(draft.unused_notes([n], draft.load_history(path)), [])
+
+    def test_record_rejects_unknown_pillar(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(draft.DraftError):
+                draft.record(os.path.join(d, "history.json"), "nonsense", TODAY)
+
+    def test_corrupt_history_raises_rather_than_silently_resetting(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "history.json")
+            with open(path, "w") as f:
+                f.write("{not json")
+            with self.assertRaises(draft.DraftError):
+                draft.load_history(path)
+
+    def test_recorded_post_affects_the_next_selection(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "history.json")
+            for _ in range(2):
+                pillar, _ = draft.select(draft.load_history(path), TODAY, ALL_KEYS)
+                draft.record(path, pillar["key"], TODAY)
+            with open(path) as f:
+                picked = [row["pillar"] for row in json.load(f)]
+            # If history were ignored the rotation would return the same pillar
+            # forever.
+            self.assertEqual(picked, ["client-work", "decision"])
+
+
+if __name__ == "__main__":
+    unittest.main()

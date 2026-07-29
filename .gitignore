@@ -1,0 +1,8 @@
+raw/
+__pycache__/
+*.pyc
+.scratch/
+
+# Real notes can quote a client constraint. Only the template ships.
+notes/*.md
+!notes/_TEMPLATE.md
