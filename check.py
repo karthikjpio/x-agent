@@ -52,6 +52,75 @@ BAIT = [
 
 PLACEHOLDER = re.compile(r"\b(TODO|TKTK|XXX|FIXME|lorem ipsum)\b|\[[^\]]*\bfill\b[^\]]*\]", re.I)
 
+# Karthik: emoji are fine, "but dont overkill it". Two is the line. It is a
+# judgment call and it is one number to change. Worth knowing that emoji density
+# is itself a documented AI marker, so a low cap serves both goals at once.
+EMOJI_LIMIT = 2
+
+# --- sounding like a model -------------------------------------------------
+#
+# Karthik asked for this directly: no text that sounds like AI. The signals below
+# come from what current work on detection actually finds, not from taste.
+#
+# Negative parallelism is the strongest phrase-level tell. A Washington Post
+# analysis of 328,744 ChatGPT messages found it everywhere: "it's not X, it's Y",
+# "it's less about X and more about Y". Karthik's own guide bans the same
+# construction independently, calling it a false contrast that mimics insight
+# without containing any.
+NEGATIVE_PARALLELISM = [
+    # Both halves are required. "The first run did not work" is a plain negative
+    # and must not trip this; the tell is the contrast, not the word "not".
+    re.compile(r"\b(?:it|this|that|they|we|he|she)"
+               r"(?:'s\s+not|'re\s+not|\s+is\s+not|\s+are\s+not|\s+isn't|\s+aren't"
+               r"|\s+wasn't|\s+weren't|\s+was\s+not|\s+were\s+not)\s+(?:just\s+)?"
+               r"[^.!?,;]{1,60}[,;]\s*(?:it|this|that|they|we)\s*(?:'s|'re|\s+is|\s+are)",
+               re.I),
+    re.compile(r"\bis(?:n't| not)\s+(?:just\s+)?about\b[^.!?]{1,60}\bit'?s about\b", re.I),
+    re.compile(r"\bless about\b[^.!?]{1,60}\bmore about\b", re.I),
+    re.compile(r"\bnot\s+(?:just\s+)?(?:[a-z]+\s+){0,3}[a-z]+\s*[,;]\s*but\b", re.I),
+]
+
+# Vocabulary whose frequency measurably jumped after ChatGPT shipped, plus the
+# hype and slop words Karthik's guide names.
+AI_WORDS = [
+    "delve", "delves", "delving", "tapestry", "underscore", "underscores",
+    "meticulous", "meticulously", "commendable", "showcase", "showcases",
+    "showcasing", "surpass", "intricate", "pivotal", "realm", "testament",
+    "leverage", "leveraging", "robust", "comprehensive", "cutting-edge",
+    "seamless", "seamlessly", "landscape", "elevate", "boasts",
+    "game-changer", "game changer", "revolutionary", "supercharge", "unlock",
+    "thrilled", "delighted", "excited to announce", "in today's fast-paced world",
+]
+
+# Connectives that signal essay scaffolding rather than a person talking.
+AI_TRANSITIONS = [
+    "in conclusion", "furthermore", "moreover", "it is important to note",
+    "it's important to note", "on the one hand", "while some may argue",
+    "in the ever-evolving", "let's dive in", "at the end of the day",
+    "when it comes to",
+]
+
+SENTENCE_SPLIT = re.compile(r"[.!?]+(?:\s+|$)")
+
+# Cadence uniformity is reported as the tell that survives longest across prompt
+# rewrites: sentence after sentence landing on the same length. Karthik's guide
+# says the same thing in his own words, that uniform rhythm is itself a tell now
+# and the fix is a five-word sentence next to a thirty-word one. Two independent
+# sources agreeing is why this is checked rather than left to taste.
+MIN_SENTENCES_FOR_CADENCE = 4
+MIN_LENGTH_SPREAD = 5.0
+
+
+def sentence_lengths(post):
+    return [len(s.split()) for s in SENTENCE_SPLIT.split(post) if s.split()]
+
+
+def stdev(values):
+    if len(values) < 2:
+        return 0.0
+    mean = sum(values) / len(values)
+    return (sum((v - mean) ** 2 for v in values) / (len(values) - 1)) ** 0.5
+
 # Numbers, normalised: 1,200 -> 1200, 40% -> 40, trailing sentence period dropped.
 NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
@@ -100,11 +169,11 @@ def check(draft, material=None, thread=False, allow=()):
         if len(post) > POST_LIMIT:
             fail("length", "%s%d chars, limit %d" % (where, len(post), POST_LIMIT))
 
-        emojis = sorted({ch for ch in post if is_emoji(ch)})
-        if emojis:
-            fail("emoji", "%sfound %s. Karthik's stated rule: none on X, 2 to 4 on "
-                 "LinkedIn. This gate is X-only, so any emoji fails here."
-                 % (where, " ".join(emojis)))
+        emojis = [ch for ch in post if is_emoji(ch)]
+        if len(emojis) > EMOJI_LIMIT:
+            fail("emoji", "%s%d emoji (%s), limit %d. Emoji are fine, overkill is not, "
+                 "and density is itself an AI marker."
+                 % (where, len(emojis), " ".join(sorted(set(emojis))), EMOJI_LIMIT))
 
         if "—" in post or "–" in post:
             fail("em_dash", "%sem/en dash present. Hard rule, stated by Karthik: "
@@ -121,7 +190,39 @@ def check(draft, material=None, thread=False, allow=()):
 
         tags = re.findall(r"(?<!\w)#\w+", post)
         if tags:
-            warn("hashtag", "%s%s — not present in the observed corpus" % (where, " ".join(tags)))
+            warn("hashtag", "%s%s, not present in the observed corpus"
+                 % (where, " ".join(tags)))
+
+        for pattern in NEGATIVE_PARALLELISM:
+            hit = pattern.search(post)
+            if hit:
+                fail("negative_parallelism",
+                     "%s%r. The single most reported AI phrase pattern. State the "
+                     "thing you mean instead of contrasting it with what it isn't."
+                     % (where, hit.group(0).strip()))
+                break
+
+        words = set(re.findall(r"[a-z'-]+", low))
+        hits = sorted(w for w in AI_WORDS if (w in words if " " not in w else w in low))
+        if hits:
+            fail("ai_vocabulary",
+                 "%s%s. Words whose use measurably jumped after ChatGPT shipped, or "
+                 "hype Karthik's guide bans." % (where, ", ".join(repr(h) for h in hits)))
+
+        scaffolding = sorted(t for t in AI_TRANSITIONS if t in low)
+        if scaffolding:
+            fail("ai_transition",
+                 "%s%s. Essay scaffolding, not a person talking."
+                 % (where, ", ".join(repr(s) for s in scaffolding)))
+
+        lengths = sentence_lengths(post)
+        if len(lengths) >= MIN_SENTENCES_FOR_CADENCE:
+            spread = stdev(lengths)
+            if spread < MIN_LENGTH_SPREAD:
+                warn("uniform_cadence",
+                     "%ssentence lengths %s, spread %.1f. Cadence uniformity is the AI "
+                     "tell that survives longest. Put a short sentence next to a long one."
+                     % (where, lengths, spread))
 
     # Number check runs across the whole draft, not per post: a thread may introduce a
     # figure in post 1 and refer back to it later.

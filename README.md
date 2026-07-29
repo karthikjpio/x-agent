@@ -26,7 +26,7 @@ pipeline, because the output looks exactly like the good output.
 
 ## Design
 
-Four properties, each of which cost something to get:
+Five properties, each of which cost something to get:
 
 **Empty is a result, not an error.** `gather.py` exits `3` when there is no material in
 the window, and the raw-material file it writes says so in its own text. `draft.py` exits
@@ -66,6 +66,16 @@ requires it to appear in the raw material that draft was written from. `87%` in 
 with no `87` in the source is a blocking failure, not a style note. Numbers are the
 claims most likely to be invented and the easiest to verify mechanically, so they get
 verified mechanically.
+
+**It should not sound like a model.** I asked for this directly and it is checked, not
+left to taste. The gate blocks the contrast construction ("it's not X, it's Y"), which a
+Washington Post analysis of 328,744 ChatGPT messages found to be the most reported phrase
+pattern; vocabulary whose frequency measurably jumped after ChatGPT shipped (delve,
+tapestry, meticulous, pivotal, seamless); and essay scaffolding (in conclusion,
+furthermore, it is important to note). It also warns on **uniform cadence**, sentence
+after sentence landing on the same length, which is reported as the tell that survives
+longest across rewrites. The writer gets the same list before drafting, so a draft that
+would bounce mostly never gets written.
 
 **Unautomated checks are listed, not skipped.** Three of the five gate rules are judgment
 calls ("one clear idea", "the first line creates useful tension"). The gate prints them
@@ -118,9 +128,11 @@ carry different confidence:
   content alike. It was inferred first from a landing-page commit, which was a weak
   source because that commit was AI co-authored. The inference happened to be right, but
   it was right by luck until I confirmed it.
-- **No emoji on X** is well supported and now qualified. Zero appear across roughly 50
-  messages of my own writing, and my own rule is none on X, 2 to 4 on LinkedIn. The
-  earlier universal "no emoji" was overfitted to one channel.
+- **Emoji are capped, not banned.** This moved twice. Zero appear across roughly 50
+  messages of my own writing, so the first rule was "none", which was overfitting a chat
+  corpus to a publishing channel. My actual preference is that I like them and do not want
+  them overdone, so the gate allows two per post. Emoji density is also a documented AI
+  marker, so a low cap happens to serve both goals.
 
 That gap between a lucky inference and a stated rule is the point. In a workspace where
 most artifacts are AI-assisted, "someone wrote this" is not the same as "I wrote this",
@@ -135,7 +147,7 @@ stays out of a public repo; only the resulting rules ship, with their evidence g
 
 ## Status
 
-All four steps are done and tested: 122 tests, no dependencies.
+All four steps are done and tested: 135 tests, no dependencies.
 
 `generate.py` shells out to the `claude` CLI rather than calling an HTTP API, so it needs
 no API key and no SDK: it reuses the credentials the CLI already has. The model command is

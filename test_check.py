@@ -35,11 +35,15 @@ class TestClean(unittest.TestCase):
 
 
 class TestVoiceRules(unittest.TestCase):
-    def test_emoji_fails(self):
-        self.assertIn("emoji", rules(check.check("Shipped it 🚀", MATERIAL)))
+    def test_one_emoji_is_allowed(self):
+        # Karthik: emoji are fine, "dont overkill it". A single one is not overkill.
+        self.assertNotIn("emoji", rules(check.check("Shipped it 🚀", MATERIAL)))
 
-    def test_dingbat_emoji_fails(self):
-        self.assertIn("emoji", rules(check.check("Shipped it ✨", MATERIAL)))
+    def test_emoji_over_the_limit_fails(self):
+        self.assertIn("emoji", rules(check.check("Shipped it 🚀✨🎉🔥", MATERIAL)))
+
+    def test_dingbat_emoji_still_counts_toward_the_limit(self):
+        self.assertIn("emoji", rules(check.check("Shipped ✨✨✨✨", MATERIAL)))
 
     def test_em_dash_fails(self):
         self.assertIn("em_dash", rules(check.check("Shipped it — finally.", MATERIAL)))
@@ -120,9 +124,92 @@ class TestReporting(unittest.TestCase):
         self.assertIn("[ ]", out)
 
     def test_failing_report_does_not_claim_a_pass(self):
-        out = check.report(check.check("Shipped it 🚀", MATERIAL), False)
+        out = check.report(check.check("Shipped it 🚀✨🎉🔥", MATERIAL), False)
         self.assertIn("blocking issue", out)
         self.assertNotIn("Automated checks pass.", out)
+
+
+class TestSoundingLikeAModel(unittest.TestCase):
+    """Karthik asked for this directly: no text that sounds like AI.
+
+    The signals here come from what detection work actually reports, not from
+    taste. Where his own guide names the same thing independently, that is noted.
+    """
+
+    def test_negative_parallelism_fails(self):
+        # The most reported phrase pattern, and the one his guide bans by name.
+        for draft in [
+            "It's not a chatbot, it's a research pipeline.",
+            "This isn't just automation, it's leverage for the team.",
+            "It's less about speed and more about trust in the output.",
+            "Not a demo, but a shipped product.",
+        ]:
+            self.assertIn("negative_parallelism", rules(check.check(draft, MATERIAL)),
+                          draft)
+
+    def test_a_plain_negative_is_not_flagged(self):
+        # "not" is a normal word. Only the contrast construction is the tell.
+        for draft in [
+            "The first run did not work.",
+            "I could not trace the number back to a commit, so I cut it.",
+            "Nobody checks, and that is the whole problem.",
+        ]:
+            self.assertNotIn("negative_parallelism", rules(check.check(draft, MATERIAL)),
+                             draft)
+
+    def test_ai_vocabulary_fails(self):
+        for word in ["delve", "tapestry", "meticulous", "pivotal", "seamless",
+                     "robust", "leverage", "thrilled"]:
+            draft = "We %s into the problem." % word if word == "delve" else \
+                    "The %s result shipped." % word
+            self.assertIn("ai_vocabulary", rules(check.check(draft, MATERIAL)), word)
+
+    def test_multiword_hype_is_caught(self):
+        self.assertIn("ai_vocabulary",
+                      rules(check.check("Excited to announce the release.", MATERIAL)))
+
+    def test_a_word_containing_a_banned_word_is_not_flagged(self):
+        # Substring matching would flag "unlocked" inside ordinary prose, and
+        # "realms" style plurals are handled by listing them, not by prefixing.
+        self.assertNotIn("ai_vocabulary",
+                         rules(check.check("I relandscaped the garden.", MATERIAL)))
+
+    def test_essay_scaffolding_fails(self):
+        for phrase in ["In conclusion, it worked.",
+                       "Furthermore, the pipeline held.",
+                       "It is important to note that it broke.",
+                       "When it comes to evals, start small."]:
+            self.assertIn("ai_transition", rules(check.check(phrase, MATERIAL)), phrase)
+
+    def test_uniform_cadence_warns(self):
+        # Four sentences all the same length. The tell that survives rewrites.
+        draft = ("The agent reads the commits. "
+                 "The gate checks the numbers. "
+                 "The draft goes to review. "
+                 "The post ships on time.")
+        found = check.check(draft, MATERIAL)
+        self.assertIn("uniform_cadence", rules(found))
+        self.assertEqual([f["severity"] for f in found if f["rule"] == "uniform_cadence"],
+                         ["warn"])
+
+    def test_varied_cadence_passes(self):
+        draft = ("It broke. "
+                 "The first run of the agent invented two competitors that do not "
+                 "exist anywhere, which took a week of grounding checks to find and "
+                 "fix. Now every number traces to a source. That is the whole system.")
+        self.assertNotIn("uniform_cadence", rules(check.check(draft, MATERIAL)))
+
+    def test_short_drafts_are_not_judged_on_cadence(self):
+        # Two sentences cannot establish a rhythm, so claiming they do would be
+        # a false positive on exactly the short posts he writes.
+        self.assertNotIn("uniform_cadence",
+                         rules(check.check("It broke. I fixed it.", MATERIAL)))
+
+    def test_a_clean_human_draft_still_passes_everything(self):
+        draft = ("The first run invented two competitors that do not exist. "
+                 "A week of grounding checks later, every claim traces to a source. "
+                 "I do not trust output I cannot follow back.")
+        self.assertEqual(check.check(draft, MATERIAL), [])
 
 
 if __name__ == "__main__":

@@ -577,9 +577,33 @@ class TestPrompt(unittest.TestCase):
     def test_voice_rules_are_carried_into_the_prompt(self):
         n = draft.parse_note(NOTE, "notes/a.md")
         prompt = draft.build_prompt(draft.BY_KEY["decision"], "test", None, n)
-        self.assertIn("No emoji", prompt)
         self.assertIn("em dashes", prompt)
+        self.assertIn("two emoji", prompt)
         self.assertIn("Every number must appear", prompt)
+
+    def test_the_anti_ai_rules_reach_the_writer(self):
+        # The gate blocks these after the fact. Telling the writer up front is
+        # what stops a draft bouncing on something it could have avoided.
+        n = draft.parse_note(NOTE, "notes/a.md")
+        prompt = draft.build_prompt(draft.BY_KEY["decision"], "test", None, n)
+        self.assertIn("not X, it's Y", prompt)
+        self.assertIn("delve", prompt)
+        self.assertIn("in conclusion", prompt.lower())
+        self.assertIn("Uniform cadence", prompt)
+
+    def test_prompt_rules_stay_in_step_with_the_gate(self):
+        # These two lists drifted once already: the prompt still described the
+        # old universal no-emoji rule after the gate had moved on. Assert the
+        # words the gate actually blocks are the words the writer is warned about.
+        import check
+        n = draft.parse_note(NOTE, "notes/a.md")
+        prompt = draft.build_prompt(draft.BY_KEY["decision"], "test", None, n).lower()
+        for word in ["delve", "tapestry", "pivotal", "seamless", "robust"]:
+            self.assertIn(word, prompt, word)
+        for phrase in ["in conclusion", "furthermore", "it is important to note"]:
+            self.assertIn(phrase, prompt, phrase)
+        self.assertTrue(all(w in check.AI_WORDS for w in
+                            ["delve", "tapestry", "pivotal", "seamless", "robust"]))
 
     def test_shape_note_reaches_the_writer(self):
         n = note("outcome", kind="published")

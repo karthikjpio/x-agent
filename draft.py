@@ -46,12 +46,9 @@ NOTHING_DUE = 3
 HERE = os.path.dirname(os.path.abspath(__file__))
 WINDOW_DAYS = 7
 
-# UNRESOLVED. Two answers from Karthik disagree: he said @karthikjpIO in chat on
-# 2026-07-29, and his voice guide (July 2026) says @karthikbuilds three times.
-# Both are his. Publishing under the wrong handle is not a small error, so this
-# sits in one place rather than inline in the prompt, and it stays on the value
-# he typed most recently in conversation until he settles it.
-X_HANDLE = "@karthikjpIO"
+# Confirmed by Karthik 2026-07-29: @KarthikjpIO. The @karthikbuilds in his voice
+# guide is stale, along with that guide's 12-in-12 section.
+X_HANDLE = "@KarthikjpIO"
 
 # §12.4 source grades. The gate follows the claim, not where the evidence happens
 # to live. Work done behind a client firewall is still real; a commit is still not
@@ -160,13 +157,38 @@ MATERIAL_PILLARS = [p["key"] for p in PILLARS if "artifact" in p["allows"]]
 # §8. Enforced mechanically by check.py after generation; repeated to the writer
 # so drafts arrive clean rather than getting bounced.
 VOICE_RULES = [
-    "No emoji. Zero appear in ~50 messages of his own writing.",
-    "No em dashes or en dashes (provisional rule, see plan §8).",
-    "Short sentences. Cold open: no greeting, no throat-clearing.",
-    "Plain language, direct claims. State a thing rather than building up to it.",
+    "No em dashes or en dashes. Hard rule, stated by Karthik: anywhere, ever. "
+    "Use a comma, a colon, parentheses, or split the sentence.",
+    "At most two emoji, and none is fine. He likes them, he does not want them "
+    "overdone.",
+    "Cold open: no greeting, no throat-clearing, straight into the point.",
+    "Plain language, direct claims. State a thing rather than building up to it. "
+    "Do not hedge his own expertise: no 'may', 'might', 'could potentially'.",
     "No hashtags. No engagement bait: no 'thoughts?', no 'what do you think'.",
     "Under 280 characters for a single post.",
     "Every number must appear in the source above. If it is not there, cut it.",
+]
+
+# Karthik asked directly for text that does not sound like AI. check.py blocks
+# these after the fact; naming them here means fewer bounces. The list is what
+# detection work actually reports, not taste.
+ANTI_AI_RULES = [
+    "Never use the contrast construction: 'it's not X, it's Y', 'not just X but Y', "
+    "'less about X and more about Y'. It is the most reported AI phrase pattern and "
+    "it mimics insight without containing any. State the thing you mean.",
+    "Banned vocabulary: delve, tapestry, underscore, meticulous, showcase, pivotal, "
+    "realm, testament, leverage, robust, comprehensive, cutting-edge, seamless, "
+    "landscape, unlock, supercharge, game-changer, thrilled, delighted, "
+    "excited to announce.",
+    "No essay scaffolding: 'in conclusion', 'furthermore', 'moreover', "
+    "'it is important to note', 'when it comes to', 'at the end of the day'.",
+    "Vary sentence length deliberately. Uniform cadence, every sentence landing on "
+    "the same length, is the AI tell that survives longest. Put a five-word sentence "
+    "next to a thirty-word one.",
+    "Include one specific detail only Karthik would know: a real name, a real number "
+    "from the source, a real moment. Generic is worse than nothing.",
+    "One honest imperfection is welcome: a thing that broke, a cost that surprised "
+    "him. Do not invent one, and do not force a clean lesson onto an unresolved thing.",
 ]
 
 
@@ -494,6 +516,15 @@ def build_prompt(pillar, reason, material=None, note=None):
     out.append("rules are here too so drafts arrive clean instead of bouncing.")
     out.append("")
     for rule in VOICE_RULES:
+        out.append("- %s" % rule)
+
+    out.append("")
+    out.append("## Do not sound like a model")
+    out.append("")
+    out.append("Karthik asked for this explicitly. These are the patterns that give")
+    out.append("AI writing away, and the gate blocks most of them after you write.")
+    out.append("")
+    for rule in ANTI_AI_RULES:
         out.append("- %s" % rule)
 
     out.append("")
