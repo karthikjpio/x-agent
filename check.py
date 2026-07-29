@@ -102,11 +102,13 @@ def check(draft, material=None, thread=False, allow=()):
 
         emojis = sorted({ch for ch in post if is_emoji(ch)})
         if emojis:
-            fail("emoji", "%sfound %s — observed corpus has zero emoji in ~50 messages"
+            fail("emoji", "%sfound %s. Karthik's stated rule: none on X, 2 to 4 on "
+                 "LinkedIn. This gate is X-only, so any emoji fails here."
                  % (where, " ".join(emojis)))
 
         if "—" in post or "–" in post:
-            fail("em_dash", "%sem/en dash present — provisional voice rule, see plan §8" % where)
+            fail("em_dash", "%sem/en dash present. Hard rule, stated by Karthik: "
+                 "anywhere, ever." % where)
 
         low = post.lower()
         for phrase in BAIT:
