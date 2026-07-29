@@ -93,6 +93,54 @@ earned.
 
 ## Use
 
+The normal entry point is the durable pipeline:
+
+```console
+$ python3 pipeline.py run
+```
+
+It returns one JSON review card. The possible results are:
+
+- `needs_interview`: commits exist, but the system needs Karthik's constraint,
+  tradeoff and verification details before it writes.
+- `awaiting_review`: a draft passed the automated gate and still needs the
+  listed human checks.
+- `gate_failed`: three generation attempts failed; nothing enters review.
+- `skipped`: no eligible sourced claim exists today.
+
+The review lifecycle keeps approval separate from publication:
+
+```console
+$ python3 pipeline.py approve 2026-07-29-method-abc123
+$ python3 pipeline.py reject 2026-07-29-method-abc123 --feedback "Open with the failure"
+$ python3 pipeline.py revise 2026-07-29-method-abc123 --feedback "Cut the last line"
+$ python3 pipeline.py delivered 2026-07-29-method-abc123 --event <Buzz-event-id>
+$ python3 pipeline.py published 2026-07-29-method-abc123 \
+    --url https://x.com/KarthikjpIO/status/123
+```
+
+Approval never spends the source. Only `published`, with the real X URL,
+records the pillar in history and spends the note. Repeated scheduler runs and
+repeated lifecycle commands are idempotent.
+
+Build posts pause for an interview. Capture the verified answer with its Buzz
+event as provenance, and only add `--publishable` after Karthik explicitly says
+the details may be public:
+
+```console
+$ printf 'What happened, in Karthik'\''s own words\n' \
+  | python3 pipeline.py answer 2026-07-29-client-work-abc123 \
+      --source "Karthik in Buzz event abc123" --publishable
+$ python3 pipeline.py run
+```
+
+`workflows/daily-buzz-review.yaml` is the schedule definition used in Buzz. At
+07:00 UTC on weekdays it wakes Fizz in the project channel. Fizz runs the
+pipeline and posts exactly one review card or one visible blocker. The workflow
+does not contain credentials and does not call X.
+
+The individual stages remain available for debugging:
+
 ```console
 $ python3 gather.py --days 14                 # -> raw/GATHER_2026-07-29.md, exit 3 if empty
 $ python3 draft.py --sources                  # what has a source today, per pillar
@@ -153,9 +201,18 @@ The voice-calibration corpus. Deriving writing style from my own messages means 
 them, including typos and things said in frustration in private channels. That analysis
 stays out of a public repo; only the resulting rules ship, with their evidence grade.
 
+The project-specific privacy denylist is also excluded. Copy
+`config/private-denylist.example.txt` to `config/private-denylist.txt` and place
+private client codenames and internal resource identifiers there. Publishing
+the real denylist would disclose the identifiers it protects. The privacy gate
+runs on the source before generation and on the draft before review; it also
+blocks common API keys, Nostr private keys, private-key blocks, and phone
+numbers.
+
 ## Status
 
-All four steps are done and tested: 135 tests, no dependencies.
+The four drafting stages and the human review lifecycle are done and tested:
+149 tests, no third-party Python dependencies.
 
 `generate.py` shells out to the `claude` CLI rather than calling an HTTP API, so it needs
 no API key and no SDK: it reuses the credentials the CLI already has. The model command is
@@ -165,3 +222,7 @@ command, a non-zero exit and a timeout, without ever calling a model.
 It stays the thinnest module here on purpose. Everything that decides whether a post is
 honest happens before it, and everything that decides whether a draft is publishable
 happens after it.
+
+There is deliberately no X API client, credential, or posting action in this
+repository. A human publishes the approved text and gives the pipeline the post
+URL afterward.

@@ -1,0 +1,5 @@
+# One exact private identifier per line.
+# Copy to private-denylist.txt. The real file is gitignored.
+# Do not put secrets in this example.
+client-project-codename
+internal-resource-name

@@ -1,7 +1,10 @@
 raw/
+state/
 __pycache__/
 *.pyc
 .scratch/
+config/private-denylist.txt
+*.log
 
 # Real notes can quote a client constraint. Only the template ships.
 notes/*.md

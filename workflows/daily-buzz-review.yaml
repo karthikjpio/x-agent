@@ -1,0 +1,10 @@
+name: "X agent daily review"
+description: "Wake Fizz to produce one sourced, checked X draft for human review."
+enabled: true
+trigger:
+  on: schedule
+  cron: "0 7 * * 1-5"
+steps:
+  - id: wake_fizz
+    action: send_message
+    text: "@Fizz scheduled X-agent run: execute pipeline.py run. If its run ID already has delivery_event_id, do not post it again. Otherwise post exactly one review card or one visible blocker, then record the Buzz event with pipeline.py delivered. Never publish to X."
