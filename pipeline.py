@@ -380,6 +380,8 @@ def transition(state_dir, run_id, action, feedback=None, post_url=None,
 
 
 def delivery_card(row):
+    if row["status"] == "never_run":
+        return row
     if row["status"] == "needs_interview":
         return row["review"]
     card = {

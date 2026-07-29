@@ -212,7 +212,7 @@ numbers.
 ## Status
 
 The four drafting stages and the human review lifecycle are done and tested:
-149 tests, no third-party Python dependencies.
+150 tests, no third-party Python dependencies.
 
 `generate.py` shells out to the `claude` CLI rather than calling an HTTP API, so it needs
 no API key and no SDK: it reuses the credentials the CLI already has. The model command is

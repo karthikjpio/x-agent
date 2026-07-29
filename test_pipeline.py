@@ -64,6 +64,11 @@ class PipelineCase(unittest.TestCase):
 
 
 class TestRun(PipelineCase):
+    def test_never_run_status_is_renderable(self):
+        self.assertEqual(
+            {"status": "never_run"},
+            pipeline.delivery_card({"status": "never_run"}))
+
     def test_note_backed_happy_path_uses_the_note_for_number_checks(self):
         write_note(self.notes)
         row = self.start(lambda prompt: "The 5 step method caught the bad draft.")
