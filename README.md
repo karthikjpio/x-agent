@@ -129,7 +129,7 @@ raise it and to include private repos.
 
 ## Voice rules are versioned, and their evidence is graded
 
-The gate enforces "no emoji" and "no em dashes". Those came from observation, and they
+The gate enforces "no em dashes" and caps emoji at two per post. Those rules came from observation, and they
 carry different confidence:
 
 - **No em dashes** is a hard rule, stated by me directly: anywhere, ever, in code and
