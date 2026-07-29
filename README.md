@@ -13,12 +13,20 @@ agent output I can't trace back to a source.
 
 ## The failure it exists to prevent
 
-A previous version of this system produced 19 drafts and shipped 0 posts in 10 days. The
-real reason is not a clever one: I kept forgetting about it, I got busy, and **it was too
-passive.** It waited on a dashboard for me to come to it. Nothing ever came to me.
+A previous version of this system left **22 drafts sitting at status `pending` and one
+post in the log.** I had been quoting "19 drafts, 0 posts" from a summary; the actual
+`drafts.json` and `posted-log.md` say 22 and 1. A number I repeated for a week turned out
+to be wrong in both directions, which is the whole argument for the gate below.
 
-That is a design fault, not a discipline fault, and it is the one worth fixing first. A
-tool that needs you to remember it will lose to everything else in your week.
+The real reason is not a clever one: I kept forgetting about it, I got busy, and **it was
+too passive.** It waited on a local dashboard for me to come to it.
+
+The sharpest version of that: it shipped with `setup-launchd.sh`, a script that would have
+scheduled the daily run. **It was never run.** There is no launch agent installed and no
+log directory. The automation existed as a file, which is not the same as existing.
+
+That is a design fault, not a discipline fault. A tool that needs you to remember it, and
+a scheduler that needs you to install it, both lose to everything else in your week.
 
 The second failure is subtler. On a day with no material, a generator will happily write
 a convincing ship log about nothing. That is not a bug you notice from inside the
